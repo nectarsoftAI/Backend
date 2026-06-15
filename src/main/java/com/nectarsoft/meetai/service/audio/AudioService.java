@@ -2,6 +2,7 @@ package com.nectarsoft.meetai.service.audio;
 
 import com.nectarsoft.meetai.config.MeetAiProperties;
 import com.nectarsoft.meetai.service.audio.handlers.*;
+import com.nectarsoft.meetai.storage.FileStorage;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -9,7 +10,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
@@ -19,20 +19,13 @@ import java.util.UUID;
 public class AudioService {
 
     private final MeetAiProperties props;
+    private final FileStorage fileStorage;
 
     private AudioHandler fullChain;       // wav2vec2용
     private AudioHandler formatOnlyChain; // openai_whisper용
 
-    private Path uploadDir;
-    private Path tempDir;
-
     @PostConstruct
-    void init() throws IOException {
-        uploadDir = Path.of(props.getStorage().getUploadDir());
-        tempDir = Path.of(props.getStorage().getTempDir());
-        Files.createDirectories(uploadDir);
-        Files.createDirectories(tempDir);
-
+    void init() {
         // ── Chain of Responsibility 조립 ─────────────────────────────
         FormatValidationHandler format = new FormatValidationHandler(props);
         SilenceDetectionHandler silence = new SilenceDetectionHandler(props);
@@ -49,9 +42,7 @@ public class AudioService {
 
     public Path saveUpload(MultipartFile file) throws IOException {
         String filename = UUID.randomUUID() + "_" + file.getOriginalFilename();
-        Path dest = uploadDir.resolve(filename);
-        file.transferTo(dest);
-        return dest;
+        return fileStorage.saveUpload(filename, file);
     }
 
     public AudioContext preprocess(Path sourcePath) {
@@ -65,10 +56,13 @@ public class AudioService {
             case "openai_whisper" -> formatOnlyChain.handle(ctx);
             default -> {
                 // wav2vec2: 전체 체인 (16kHz WAV 변환)
-                Path working = tempDir.resolve(sourcePath.getFileName());
-                try { Files.copy(sourcePath, working); } catch (IOException e) { throw new RuntimeException(e); }
-                ctx.setWorkingPath(working);
-                yield fullChain.handle(ctx);
+                try {
+                    Path working = fileStorage.saveTempCopy(sourcePath);
+                    ctx.setWorkingPath(working);
+                    yield fullChain.handle(ctx);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
         };
     }

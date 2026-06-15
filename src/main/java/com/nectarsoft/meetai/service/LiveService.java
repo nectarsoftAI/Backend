@@ -1,18 +1,13 @@
 package com.nectarsoft.meetai.service;
 
-import com.nectarsoft.meetai.config.MeetAiProperties;
 import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.model.LiveSession;
 import com.nectarsoft.meetai.model.LiveSessionStatus;
 import com.nectarsoft.meetai.repository.LiveSessionRepository;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,16 +19,8 @@ public class LiveService {
 
     private final LiveSessionRepository sessionRepo;
     private final LiveBufferProcessor processor;
-    private final MeetAiProperties props;
 
     private final ConcurrentHashMap<String, SessionBuffer> buffers = new ConcurrentHashMap<>();
-    private Path tempDir;
-
-    @PostConstruct
-    void init() throws IOException {
-        tempDir = Path.of(props.getStorage().getTempDir());
-        Files.createDirectories(tempDir);
-    }
 
     public LiveSession createSession() {
         LiveSession session = LiveSession.builder()
@@ -61,7 +48,7 @@ public class LiveService {
 
         // 30초 or 500KB 조건 충족 시 비동기 STT 처리 (별도 컴포넌트로 @Async 정상 동작)
         if (buffer.shouldProcess()) {
-            processor.process(sessionId, buffer, tempDir, false);
+            processor.process(sessionId, buffer, false);
         }
     }
 
@@ -74,20 +61,12 @@ public class LiveService {
         SessionBuffer buffer = buffers.remove(sessionId);
         if (buffer != null && buffer.hasInit()) {
             log.info("[Live] 세션 종료 — 남은 버퍼 처리");
-            processor.process(sessionId, buffer, tempDir, true);
+            processor.process(sessionId, buffer, true);
         }
 
         session.setStatus(LiveSessionStatus.ENDED);
         session.setEndedAt(LocalDateTime.now());
         sessionRepo.save(session);
         log.info("[Live] 세션 종료 완료 — {}", sessionId);
-    }
-
-    private void ensureActive(String sessionId) {
-        LiveSession session = sessionRepo.findById(sessionId)
-                .orElseThrow(() -> new Exceptions.SessionNotFoundError(sessionId));
-        if (session.getStatus() != LiveSessionStatus.ACTIVE) {
-            throw new Exceptions.SessionNotFoundError(sessionId + " (비활성 세션)");
-        }
     }
 }
