@@ -1,0 +1,9 @@
+@echo off
+REM MeetAI Spring Boot 실행 스크립트
+REM 이 파일을 더블클릭하거나 cmd에서 실행하세요
+
+set OPENAI_API_KEY=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
+
+gradle bootRun
+
+pause

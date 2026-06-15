@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>MeetAI 라이브 회의</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; }
+
+    .header {
+      background: #1a1a2e; color: white;
+      padding: 16px 24px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .header h1 { font-size: 20px; }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #555; display: inline-block;
+    }
+    .status-dot.active   { background: #4ade80; animation: pulse 1s infinite; }
+    .status-dot.error    { background: #f87171; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    .container { display: grid; grid-template-columns: 300px 1fr; gap: 16px; padding: 20px; max-width: 1200px; margin: 0 auto; }
+
+    /* 왼쪽 컨트롤 패널 */
+    .panel { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .panel h2 { font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px; }
+
+    .server-input { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
+
+    .btn { width: 100%; padding: 11px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: .15s; }
+    .btn-start { background: #16a34a; color: white; }
+    .btn-start:hover:not(:disabled) { background: #15803d; }
+    .btn-stop  { background: #dc2626; color: white; margin-top: 8px; }
+    .btn-stop:hover:not(:disabled)  { background: #b91c1c; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    .status-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; background: #f3f4f6; color: #6b7280; }
+    .status-box.connected  { background: #dcfce7; color: #16a34a; }
+    .status-box.recording  { background: #fef3c7; color: #d97706; }
+    .status-box.error      { background: #fee2e2; color: #dc2626; }
+
+    .log-box { margin-top: 14px; background: #1e1e2e; border-radius: 8px; padding: 10px; height: 180px; overflow-y: auto; font-size: 11px; font-family: monospace; color: #a0a0b0; }
+    .log-box .ok  { color: #4ade80; }
+    .log-box .err { color: #f87171; }
+    .log-box .send { color: #60a5fa; }
+
+    /* 오른쪽 자막창 */
+    .transcript-panel { background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); display: flex; flex-direction: column; }
+    .transcript-header { padding: 16px 20px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
+    .transcript-header h2 { font-size: 16px; }
+    .clear-btn { font-size: 12px; color: #888; background: none; border: 1px solid #ddd; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+
+    .transcript-body { flex: 1; padding: 20px; overflow-y: auto; height: 520px; }
+    .empty-state { text-align: center; color: #bbb; margin-top: 80px; font-size: 14px; }
+
+    .segment {
+      display: flex; gap: 12px; padding: 10px 0;
+      border-bottom: 1px solid #f5f5f5; animation: fadeIn .3s ease;
+    }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
+
+    .speaker-badge {
+      min-width: 72px; height: 24px; border-radius: 12px;
+      font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+      margin-top: 2px;
+    }
+    .segment-content { flex: 1; }
+    .segment-text { font-size: 15px; color: #1a1a1a; line-height: 1.5; }
+    .segment-meta { font-size: 11px; color: #aaa; margin-top: 3px; }
+    .low-conf { color: #f59e0b; }
+
+    /* 화자별 색상 */
+    .spk-0 { background:#dbeafe; color:#1d4ed8; }
+    .spk-1 { background:#fce7f3; color:#be185d; }
+    .spk-2 { background:#dcfce7; color:#15803d; }
+    .spk-3 { background:#fef9c3; color:#854d0e; }
+    .spk-other { background:#f3f4f6; color:#374151; }
+
+    /* 처리 중 인디케이터 */
+    .processing-bar {
+      height: 3px; background: linear-gradient(90deg, #6366f1, #8b5cf6);
+      border-radius: 2px; display: none;
+      animation: slide 1.5s infinite;
+    }
+    .processing-bar.active { display: block; }
+    @keyframes slide { 0%{background-position:0} 100%{background-position:200px} }
+  </style>
+</head>
+<body>
+<div class="header">
+  <span class="status-dot" id="dot"></span>
+  <h1>🎙️ MeetAI 라이브 회의</h1>
+</div>
+
+<div class="container">
+  <!-- 왼쪽 컨트롤 -->
+  <div class="panel">
+    <h2>설정</h2>
+    <input class="server-input" id="serverUrl" value="http://localhost:8000" placeholder="서버 주소">
+    <button class="btn btn-start" id="startBtn" onclick="startSession()">🔴 녹음 시작</button>
+    <button class="btn btn-stop"  id="stopBtn"  onclick="stopSession()" disabled>⏹ 녹음 종료</button>
+    <div class="status-box" id="statusBox">⚫ 대기 중</div>
+    <div class="log-box" id="logBox"><span style="color:#555">로그</span></div>
+  </div>
+
+  <!-- 오른쪽 자막창 -->
+  <div class="transcript-panel">
+    <div class="transcript-header">
+      <h2>📝 실시간 자막</h2>
+      <button class="clear-btn" onclick="clearTranscript()">초기화</button>
+    </div>
+    <div class="processing-bar" id="processingBar"></div>
+    <div class="transcript-body" id="transcriptBody">
+      <div class="empty-state" id="emptyState">녹음을 시작하면 자막이 여기에 표시됩니다</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let ws = null, recorder = null, sessionId = null, keepAliveTimer = null;
+
+  const SPEAKER_COLORS = ['spk-0','spk-1','spk-2','spk-3'];
+  const speakerMap = {};
+
+  function speakerClass(id) {
+    if (!speakerMap[id]) {
+      const idx = Object.keys(speakerMap).length % SPEAKER_COLORS.length;
+      speakerMap[id] = SPEAKER_COLORS[idx] || 'spk-other';
+    }
+    return speakerMap[id];
+  }
+
+  function log(msg, cls='') {
+    const box = document.getElementById('logBox');
+    const t = new Date().toLocaleTimeString();
+    box.innerHTML += `<div class="${cls}">[${t}] ${msg}</div>`;
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setStatus(msg, cls='') {
+    const s = document.getElementById('statusBox');
+    s.textContent = msg;
+    s.className = 'status-box ' + cls;
+    const dot = document.getElementById('dot');
+    dot.className = 'status-dot ' + (cls === 'connected' || cls === 'recording' ? 'active' : cls === 'error' ? 'error' : '');
+  }
+
+  function addSegment(speakerId, text, startSec, endSec, lowConf) {
+    document.getElementById('emptyState')?.remove();
+    const body = document.getElementById('transcriptBody');
+    const label = speakerId.replace('SPEAKER_', '화자 ');
+    const cls = speakerClass(speakerId);
+    const conf = lowConf ? '<span class="low-conf">⚠ 낮은 신뢰도</span>' : '';
+    const div = document.createElement('div');
+    div.className = 'segment';
+    div.innerHTML = `
+      <div class="speaker-badge ${cls}">${label}</div>
+      <div class="segment-content">
+        <div class="segment-text">${text}</div>
+        <div class="segment-meta">${startSec.toFixed(1)}s ~ ${endSec.toFixed(1)}s ${conf}</div>
+      </div>`;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function clearTranscript() {
+    document.getElementById('transcriptBody').innerHTML =
+      '<div class="empty-state" id="emptyState">녹음을 시작하면 자막이 여기에 표시됩니다</div>';
+    Object.keys(speakerMap).forEach(k => delete speakerMap[k]);
+  }
+
+  async function startSession() {
+    const base = document.getElementById('serverUrl').value.trim();
+    clearTranscript();
+    log('세션 생성 중...');
+
+    try {
+      const res = await fetch(`${base}/api/v1/live/sessions`, { method: 'POST' });
+      const data = await res.json();
+      sessionId = data.sessionId;
+      log(`✅ 세션 생성 — ${sessionId}`, 'ok');
+    } catch (e) {
+      log('❌ 세션 생성 실패: ' + e.message, 'err');
+      setStatus('🔴 연결 실패', 'error');
+      return;
+    }
+
+    const wsUrl = `ws://localhost:8000/api/v1/live/ws/${sessionId}`;
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      log('✅ WebSocket 연결', 'ok');
+      setStatus('🟢 연결됨', 'connected');
+      keepAliveTimer = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ action: 'ping' }));
+      }, 30000);
+      startMic().catch(e => {
+        log('❌ 마이크 오류: ' + e.message, 'err');
+        setStatus('🔴 마이크 권한 필요', 'error');
+      });
+    };
+
+    ws.onmessage = (e) => {
+      console.log('📨 WS 수신 raw:', e.data);
+      let data;
+      try { data = JSON.parse(e.data); } catch(err) { console.error('JSON 파싱 실패', err); return; }
+      console.log('📨 WS 수신 parsed:', data);
+      if (data.type === 'segment') {
+        console.log('✅ segment 수신:', data.text);
+        addSegment(data.speaker_id, data.text, data.start_sec, data.end_sec, data.low_confidence);
+        document.getElementById('processingBar').classList.remove('active');
+      } else if (data.type === 'session_ended') {
+        log('✅ 세션 종료 완료', 'ok');
+        setStatus('⚫ 종료됨');
+        document.getElementById('processingBar').classList.remove('active');
+      } else if (data.type === 'error') {
+        log('❌ 서버 오류: ' + data.message, 'err');
+      } else {
+        console.log('⚠️ 알 수 없는 타입:', data.type);
+      }
+    };
+
+    ws.onerror = () => { log('❌ WebSocket 오류', 'err'); setStatus('🔴 오류', 'error'); };
+    ws.onclose = (e) => { log(`🔌 연결 종료 (${e.code})`); setStatus('⚫ 종료됨'); };
+
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+  }
+
+  async function startMic() {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    setStatus('🔴 녹음 중...', 'recording');
+    log('🎙️ 마이크 시작 (5초 단위 전송)', 'ok');
+
+    recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    recorder.ondataavailable = async (e) => {
+      if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+        const buf = await e.data.arrayBuffer();
+        ws.send(buf);
+        log(`📤 ${(buf.byteLength/1024).toFixed(1)} KB 전송`, 'send');
+        document.getElementById('processingBar').classList.add('active');
+      }
+    };
+    recorder.start(5000);
+  }
+
+  function stopSession() {
+    clearInterval(keepAliveTimer);
+    if (recorder?.state !== 'inactive') {
+      recorder.stop();
+      recorder.stream.getTracks().forEach(t => t.stop());
+    }
+    if (ws) { ws.send(JSON.stringify({ action: 'end' })); }
+    setStatus('⏳ 최종 처리 중...');
+    log('⏹ 녹음 종료 — 최종 STT 처리 중...');
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    document.getElementById('processingBar').classList.remove('active');
+    setStatus('⚫ 종료됨');
+    log('⏹ 녹음 종료');
+  }
+</script>
+</body>
+</html>

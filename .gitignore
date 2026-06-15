@@ -1,0 +1,27 @@
+# 환경변수
+.env
+.env.*
+
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 임시 파일
+uploads/
+temp/
+*.webm
+*.wav
+*.mp3
+
+# DB
+*.mv.db
+*.trace.db
+
+# 로그
+*.log
+logs/

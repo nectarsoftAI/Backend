@@ -1,0 +1,66 @@
+# ── Central Control ─────────────────────────────────────────────────
+meetai:
+  storage:
+    upload-dir: uploads
+    temp-dir: temp
+
+  audio:
+    sample-rate: 16000
+    channels: 1
+    format: wav
+    max-size-mb: 100
+    min-duration-sec: 1.0
+    max-duration-sec: 7200.0
+    silence-threshold-ratio: 0.7
+    supported-formats: wav,mp3,m4a,ogg,flac,webm
+
+  stt:
+    # openai_whisper | wav2vec2
+    engine: openai_whisper
+    confidence-threshold: 0.8
+    max-retries: 3
+    retry-base-delay-ms: 1000
+    retry-max-delay-ms: 8000
+
+  openai:
+    api-key: ${OPENAI_API_KEY}
+    whisper-model: whisper-1
+    whisper-language: ko
+
+  diarization:
+    min-speakers: 1
+    max-speakers: 10
+
+  live:
+    chunk-min-duration-sec: 0.5
+    chunk-max-silence-ratio: 0.7
+    chunk-expected-sample-rate: 16000
+
+# ── Database ─────────────────────────────────────────────────────────
+spring:
+  datasource:
+    url: jdbc:h2:file:./meetai_test;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true          # http://localhost:8000/h2-console
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate.format_sql: true
+
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+server:
+  port: 8000
+
+logging:
+  level:
+    com.nectarsoft.meetai: INFO
