@@ -4,12 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.websocket.WebSocketManager;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import com.nectarsoft.meetai.service.stt.SttService;
+import com.nectarsoft.meetai.storage.FileStorage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -24,19 +24,20 @@ public class LiveBufferProcessor {
 
     private final SttService sttService;
     private final WebSocketManager wsManager;
+    private final FileStorage fileStorage;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Async
-    public void process(String sessionId, SessionBuffer buffer, Path tempDir, boolean isFinal) {
+    public void process(String sessionId, SessionBuffer buffer, boolean isFinal) {
         try {
             byte[] audioData = buffer.drainAndBuild();
             log.info("[Live] STT 처리 — sessionId={}, bytes={}", sessionId, audioData.length);
 
-            Path tmpFile = tempDir.resolve("live_" + sessionId + "_" + System.nanoTime() + ".webm");
-            Files.write(tmpFile, audioData);
+            String filename = "live_" + sessionId + "_" + System.nanoTime() + ".webm";
+            Path tmpFile = fileStorage.saveTempBytes(filename, audioData);
 
             List<RawSegment> segments = sttService.process(tmpFile);
-            Files.deleteIfExists(tmpFile);
+            fileStorage.delete(tmpFile);
 
             for (RawSegment seg : segments) {
                 String json = objectMapper.writeValueAsString(Map.of(
@@ -51,7 +52,6 @@ public class LiveBufferProcessor {
             }
             log.info("[Live] 브로드캐스트 완료 — {} 구간", segments.size());
 
-            // 세션 종료 처리 완료 후 클라이언트에 알리고 연결 닫기
             if (isFinal) {
                 wsManager.broadcast(sessionId, objectMapper.writeValueAsString(
                         Map.of("type", "session_ended")));
