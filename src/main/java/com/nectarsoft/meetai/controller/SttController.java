@@ -45,8 +45,9 @@ public class SttController {
         Path saved = audioService.saveUpload(file);
         AudioContext ctx = audioService.preprocess(saved);
 
-        // meeting 생성
+        // meeting 생성 (인증 전 임시 익명 사용자 ID)
         Meeting meeting = Meeting.builder()
+                .userId(UUID.fromString("00000000-0000-0000-0000-000000000001"))
                 .title(file.getOriginalFilename())
                 .meetingType(MeetingType.UPLOAD)
                 .status(MeetingStatus.PROCESSING)
