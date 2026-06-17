@@ -15,8 +15,8 @@ meetai:
     supported-formats: wav,mp3,m4a,ogg,flac,webm
 
   stt:
-    # openai_whisper | wav2vec2
-    engine: openai_whisper
+    # openai_whisper | gpt4o
+    engine: gpt4o
     confidence-threshold: 0.8
     max-retries: 3
     retry-base-delay-ms: 1000
