@@ -24,7 +24,7 @@ meetai:
 
   openai:
     api-key: ${OPENAI_API_KEY}
-    whisper-model: whisper-1
+    whisper-model: gpt-4o-transcribe
     whisper-language: ko
 
   diarization:
