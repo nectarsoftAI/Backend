@@ -17,24 +17,33 @@
     .status.connected { background: #2d7a3a; color: #8ff08f; }
     .status.recording { background: #7a2d2d; color: #ff8f8f; animation: blink 1s infinite; }
     @keyframes blink { 50% { opacity: 0.5; } }
-    #transcript-box {
-      background: #252526; padding: 15px; min-height: 200px; max-height: 350px;
-      overflow-y: auto; border: 1px solid #3c3c3c; border-radius: 4px; margin-top: 10px;
-      font-size: 15px; line-height: 1.8;
-    }
-    .segment { color: #d4d4d4; padding: 4px 0; border-bottom: 1px solid #2a2a2a; }
-    .segment .time { color: #858585; font-size: 12px; margin-right: 8px; }
-    .segment .speaker { color: #9cdcfe; margin-right: 8px; }
-    #log {
-      background: #252526; padding: 10px; height: 150px; overflow-y: auto;
-      border: 1px solid #3c3c3c; border-radius: 4px; margin-top: 10px; font-size: 12px;
-    }
-    .recv { color: #4ec9b0; }
-    .send { color: #dcdcaa; }
-    .info { color: #9cdcfe; }
-    .error { color: #f48771; }
     .section-title { color: #858585; font-size: 12px; margin: 15px 0 5px; text-transform: uppercase; letter-spacing: 1px; }
     #timer { color: #dcdcaa; font-size: 13px; margin-left: 10px; }
+    #chunk-counter { color: #858585; font-size: 12px; margin-left: 10px; }
+
+    /* STT 결과 */
+    #transcript-box {
+      background: #0d1117; padding: 16px; min-height: 180px; max-height: 300px;
+      overflow-y: auto; border: 1px solid #238636; border-radius: 6px; margin-top: 8px;
+      font-size: 16px; line-height: 2;
+    }
+    .segment { padding: 6px 0; border-bottom: 1px solid #1c2128; }
+    .segment .badge {
+      display: inline-block; background: #1f6feb; color: #fff;
+      font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 8px; vertical-align: middle;
+    }
+    .segment .time { color: #555; font-size: 11px; margin-right: 8px; }
+    .segment .text { color: #e6edf3; }
+
+    /* 서버 raw 메시지 */
+    #raw-box {
+      background: #252526; padding: 10px; height: 130px; overflow-y: auto;
+      border: 1px solid #3c3c3c; border-radius: 4px; margin-top: 8px; font-size: 12px;
+    }
+    .recv { color: #4ec9b0; }
+    .send-log { color: #dcdcaa; }
+    .info { color: #9cdcfe; }
+    .error { color: #f48771; }
   </style>
 </head>
 <body>
@@ -46,16 +55,19 @@
     <button id="btn-stop" class="danger" onclick="stopRecording()" disabled>녹음 종료</button>
     <span id="status" class="status disconnected">연결 안됨</span>
     <span id="timer"></span>
+    <span id="chunk-counter"></span>
   </div>
   <div style="margin-top:8px; font-size:12px; color:#858585">
     Meeting ID: <span id="meeting-id" style="color:#dcdcaa">-</span>
   </div>
 
-  <div class="section-title">STT 결과 (5초마다 자동 전송)</div>
-  <div id="transcript-box"><span style="color:#555">녹음을 시작하면 여기에 자막이 표시됩니다...</span></div>
+  <div class="section-title">🎙 STT 실시간 결과 (5초마다 갱신)</div>
+  <div id="transcript-box">
+    <span style="color:#555">녹음을 시작하면 여기에 자막이 표시됩니다...</span>
+  </div>
 
-  <div class="section-title">로그</div>
-  <div id="log"></div>
+  <div class="section-title">서버 메시지 (RAW)</div>
+  <div id="raw-box"></div>
 
   <script>
     const WS_URL = 'wss://backend-production-894a3.up.railway.app/api/v1/live/ws';
@@ -63,54 +75,53 @@
 
     let ws = null;
     let mediaRecorder = null;
-    let chunkTimer = null;
     let timerInterval = null;
     let elapsed = 0;
-    let isFirstMessage = true;
+    let chunkCount = 0;
+    let isFirstSegment = true;
 
     // ── 로그 ──────────────────────────────────────
-    function log(msg, cls = 'info') {
-      const div = document.getElementById('log');
+    function rawLog(msg, cls = 'info') {
+      const box = document.getElementById('raw-box');
       const line = document.createElement('div');
       line.className = cls;
       line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      div.appendChild(line);
-      div.scrollTop = div.scrollHeight;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
     }
 
     // ── WebSocket 연결 ──────────────────────────────
     function connect() {
       if (ws) return;
-      log(`연결 중: ${WS_URL}`);
+      rawLog(`연결 중: ${WS_URL}`);
       ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
         setStatus('connected', '연결됨');
-        log('WebSocket 연결 성공');
+        rawLog('WebSocket 연결 성공');
         document.getElementById('btn-record').disabled = false;
         document.getElementById('btn-connect').disabled = true;
       };
 
       ws.onmessage = (e) => {
-        log(`수신: ${e.data}`, 'recv');
+        rawLog(`← ${e.data}`, 'recv');
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === 'session_created') {
-            log(`세션 생성됨 — meeting_id: ${msg.meeting_id}`);
             document.getElementById('meeting-id').textContent = msg.meeting_id;
           } else if (msg.type === 'segment') {
             addSegment(msg);
           } else if (msg.type === 'session_ended') {
-            log('세션 종료됨');
+            rawLog('세션 종료됨');
           } else if (msg.type === 'error') {
-            log(`서버 오류: ${msg.message}`, 'error');
+            rawLog(`서버 오류: ${msg.message}`, 'error');
           }
         } catch (_) {}
       };
 
-      ws.onerror = () => { log('WebSocket 에러', 'error'); };
+      ws.onerror = () => rawLog('WebSocket 에러', 'error');
       ws.onclose = (e) => {
-        log(`연결 종료 (code=${e.code})`);
+        rawLog(`연결 종료 (code=${e.code})`);
         setStatus('disconnected', '연결 안됨');
         ws = null;
         document.getElementById('btn-connect').disabled = false;
@@ -123,8 +134,10 @@
     async function startRecording() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        isFirstMessage = true;
-        clearTranscript();
+        isFirstSegment = true;
+        chunkCount = 0;
+        document.getElementById('transcript-box').innerHTML =
+          '<span style="color:#555">5초마다 STT 결과가 나타납니다...</span>';
 
         mediaRecorder = new MediaRecorder(stream, { mimeType: getSupportedMimeType() });
 
@@ -132,28 +145,28 @@
           if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
             e.data.arrayBuffer().then(buf => {
               ws.send(buf);
-              log(`오디오 전송 — ${buf.byteLength} bytes`, 'send');
+              chunkCount++;
+              document.getElementById('chunk-counter').textContent =
+                `청크 전송: ${chunkCount}회 (${(buf.byteLength / 1024).toFixed(1)}KB)`;
+              rawLog(`→ binary 전송 ${buf.byteLength} bytes`, 'send-log');
             });
           }
         };
 
-        // 5초마다 청크 수집
         mediaRecorder.start(CHUNK_INTERVAL_MS);
-
         setStatus('recording', '녹음 중');
         document.getElementById('btn-record').disabled = true;
         document.getElementById('btn-stop').disabled = false;
 
-        // 타이머
         elapsed = 0;
         timerInterval = setInterval(() => {
           elapsed++;
           document.getElementById('timer').textContent = `⏱ ${formatTime(elapsed)}`;
         }, 1000);
 
-        log('녹음 시작 (5초마다 STT 전송)');
+        rawLog('녹음 시작');
       } catch (err) {
-        log(`마이크 접근 실패: ${err.message}`, 'error');
+        rawLog(`마이크 접근 실패: ${err.message}`, 'error');
       }
     }
 
@@ -169,36 +182,27 @@
       document.getElementById('btn-stop').disabled = true;
       setStatus('connected', '연결됨');
 
-      // 세션 종료 신호 전송
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'end' }));
-        log('세션 종료 신호 전송', 'send');
+        rawLog('→ {"type":"end"} 전송', 'send-log');
       }
-      log('녹음 종료');
     }
 
-    // ── STT 결과 렌더링 ──────────────────────────────
+    // ── STT 세그먼트 표시 ──────────────────────────────
     function addSegment(msg) {
       const box = document.getElementById('transcript-box');
-      if (isFirstMessage) { box.innerHTML = ''; isFirstMessage = false; }
+      if (isFirstSegment) { box.innerHTML = ''; isFirstSegment = false; }
 
       const div = document.createElement('div');
       div.className = 'segment';
-
-      const startStr = msg.start_sec != null ? formatSec(msg.start_sec) : '';
+      const timeStr = msg.start_sec != null ? formatSec(msg.start_sec) : '';
       div.innerHTML = `
-        <span class="time">${startStr}</span>
-        <span class="speaker">[${msg.speaker_label || 'SPEAKER_00'}]</span>
-        <span>${msg.text}</span>
+        <span class="badge">${msg.speaker_label || 'SPK'}</span>
+        <span class="time">${timeStr}</span>
+        <span class="text">${msg.text}</span>
       `;
       box.appendChild(div);
       box.scrollTop = box.scrollHeight;
-    }
-
-    function clearTranscript() {
-      document.getElementById('transcript-box').innerHTML =
-        '<span style="color:#555">녹음 중... 5초마다 결과가 표시됩니다.</span>';
-      isFirstMessage = true;
     }
 
     // ── 유틸 ─────────────────────────────────────────
@@ -215,7 +219,6 @@
     }
 
     function formatSec(sec) {
-      if (!sec) return '00:00';
       const m = String(Math.floor(sec / 60)).padStart(2, '0');
       const s = String(Math.floor(sec % 60)).padStart(2, '0');
       return `${m}:${s}`;
