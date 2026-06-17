@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>MeetAI WebSocket 테스트</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; margin: 0; }
+    h2 { color: #4ec9b0; margin-top: 0; }
+    button { margin: 5px; padding: 8px 16px; cursor: pointer; background: #0e639c; color: white; border: none; border-radius: 4px; font-size: 14px; }
+    button:hover { background: #1177bb; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    button.danger { background: #c72e2e; }
+    button.danger:hover { background: #e03c3c; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; margin-left: 10px; }
+    .status.disconnected { background: #555; }
+    .status.connected { background: #2d7a3a; color: #8ff08f; }
+    .status.recording { background: #7a2d2d; color: #ff8f8f; animation: blink 1s infinite; }
+    @keyframes blink { 50% { opacity: 0.5; } }
+    #transcript-box {
+      background: #252526; padding: 15px; min-height: 200px; max-height: 350px;
+      overflow-y: auto; border: 1px solid #3c3c3c; border-radius: 4px; margin-top: 10px;
+      font-size: 15px; line-height: 1.8;
+    }
+    .segment { color: #d4d4d4; padding: 4px 0; border-bottom: 1px solid #2a2a2a; }
+    .segment .time { color: #858585; font-size: 12px; margin-right: 8px; }
+    .segment .speaker { color: #9cdcfe; margin-right: 8px; }
+    #log {
+      background: #252526; padding: 10px; height: 150px; overflow-y: auto;
+      border: 1px solid #3c3c3c; border-radius: 4px; margin-top: 10px; font-size: 12px;
+    }
+    .recv { color: #4ec9b0; }
+    .send { color: #dcdcaa; }
+    .info { color: #9cdcfe; }
+    .error { color: #f48771; }
+    .section-title { color: #858585; font-size: 12px; margin: 15px 0 5px; text-transform: uppercase; letter-spacing: 1px; }
+    #timer { color: #dcdcaa; font-size: 13px; margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <h2>MeetAI 실시간 STT 테스트</h2>
+
+  <div>
+    <button id="btn-connect" onclick="connect()">연결</button>
+    <button id="btn-record" onclick="startRecording()" disabled>녹음 시작</button>
+    <button id="btn-stop" class="danger" onclick="stopRecording()" disabled>녹음 종료</button>
+    <span id="status" class="status disconnected">연결 안됨</span>
+    <span id="timer"></span>
+  </div>
+  <div style="margin-top:8px; font-size:12px; color:#858585">
+    Meeting ID: <span id="meeting-id" style="color:#dcdcaa">-</span>
+  </div>
+
+  <div class="section-title">STT 결과 (5초마다 자동 전송)</div>
+  <div id="transcript-box"><span style="color:#555">녹음을 시작하면 여기에 자막이 표시됩니다...</span></div>
+
+  <div class="section-title">로그</div>
+  <div id="log"></div>
+
+  <script>
+    const WS_URL = 'wss://backend-production-894a3.up.railway.app/api/v1/live/ws';
+    const CHUNK_INTERVAL_MS = 5000;
+
+    let ws = null;
+    let mediaRecorder = null;
+    let chunkTimer = null;
+    let timerInterval = null;
+    let elapsed = 0;
+    let isFirstMessage = true;
+
+    // ── 로그 ──────────────────────────────────────
+    function log(msg, cls = 'info') {
+      const div = document.getElementById('log');
+      const line = document.createElement('div');
+      line.className = cls;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      div.appendChild(line);
+      div.scrollTop = div.scrollHeight;
+    }
+
+    // ── WebSocket 연결 ──────────────────────────────
+    function connect() {
+      if (ws) return;
+      log(`연결 중: ${WS_URL}`);
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        setStatus('connected', '연결됨');
+        log('WebSocket 연결 성공');
+        document.getElementById('btn-record').disabled = false;
+        document.getElementById('btn-connect').disabled = true;
+      };
+
+      ws.onmessage = (e) => {
+        log(`수신: ${e.data}`, 'recv');
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'session_created') {
+            log(`세션 생성됨 — meeting_id: ${msg.meeting_id}`);
+            document.getElementById('meeting-id').textContent = msg.meeting_id;
+          } else if (msg.type === 'segment') {
+            addSegment(msg);
+          } else if (msg.type === 'session_ended') {
+            log('세션 종료됨');
+          } else if (msg.type === 'error') {
+            log(`서버 오류: ${msg.message}`, 'error');
+          }
+        } catch (_) {}
+      };
+
+      ws.onerror = () => { log('WebSocket 에러', 'error'); };
+      ws.onclose = (e) => {
+        log(`연결 종료 (code=${e.code})`);
+        setStatus('disconnected', '연결 안됨');
+        ws = null;
+        document.getElementById('btn-connect').disabled = false;
+        document.getElementById('btn-record').disabled = true;
+        document.getElementById('btn-stop').disabled = true;
+      };
+    }
+
+    // ── 녹음 시작 ────────────────────────────────────
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        isFirstMessage = true;
+        clearTranscript();
+
+        mediaRecorder = new MediaRecorder(stream, { mimeType: getSupportedMimeType() });
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+            e.data.arrayBuffer().then(buf => {
+              ws.send(buf);
+              log(`오디오 전송 — ${buf.byteLength} bytes`, 'send');
+            });
+          }
+        };
+
+        // 5초마다 청크 수집
+        mediaRecorder.start(CHUNK_INTERVAL_MS);
+
+        setStatus('recording', '녹음 중');
+        document.getElementById('btn-record').disabled = true;
+        document.getElementById('btn-stop').disabled = false;
+
+        // 타이머
+        elapsed = 0;
+        timerInterval = setInterval(() => {
+          elapsed++;
+          document.getElementById('timer').textContent = `⏱ ${formatTime(elapsed)}`;
+        }, 1000);
+
+        log('녹음 시작 (5초마다 STT 전송)');
+      } catch (err) {
+        log(`마이크 접근 실패: ${err.message}`, 'error');
+      }
+    }
+
+    // ── 녹음 종료 ────────────────────────────────────
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(t => t.stop());
+      }
+      clearInterval(timerInterval);
+      document.getElementById('timer').textContent = '';
+      document.getElementById('btn-record').disabled = false;
+      document.getElementById('btn-stop').disabled = true;
+      setStatus('connected', '연결됨');
+
+      // 세션 종료 신호 전송
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'end' }));
+        log('세션 종료 신호 전송', 'send');
+      }
+      log('녹음 종료');
+    }
+
+    // ── STT 결과 렌더링 ──────────────────────────────
+    function addSegment(msg) {
+      const box = document.getElementById('transcript-box');
+      if (isFirstMessage) { box.innerHTML = ''; isFirstMessage = false; }
+
+      const div = document.createElement('div');
+      div.className = 'segment';
+
+      const startStr = msg.start_sec != null ? formatSec(msg.start_sec) : '';
+      div.innerHTML = `
+        <span class="time">${startStr}</span>
+        <span class="speaker">[${msg.speaker_label || 'SPEAKER_00'}]</span>
+        <span>${msg.text}</span>
+      `;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearTranscript() {
+      document.getElementById('transcript-box').innerHTML =
+        '<span style="color:#555">녹음 중... 5초마다 결과가 표시됩니다.</span>';
+      isFirstMessage = true;
+    }
+
+    // ── 유틸 ─────────────────────────────────────────
+    function setStatus(cls, text) {
+      const el = document.getElementById('status');
+      el.className = `status ${cls}`;
+      el.textContent = text;
+    }
+
+    function formatTime(sec) {
+      const m = String(Math.floor(sec / 60)).padStart(2, '0');
+      const s = String(sec % 60).padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function formatSec(sec) {
+      if (!sec) return '00:00';
+      const m = String(Math.floor(sec / 60)).padStart(2, '0');
+      const s = String(Math.floor(sec % 60)).padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function getSupportedMimeType() {
+      const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+      for (const t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
+      return '';
+    }
+  </script>
+</body>
+</html>

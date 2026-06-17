@@ -16,7 +16,7 @@ import java.util.List;
 @Slf4j
 public class SessionBuffer {
 
-    private static final long PROCESS_INTERVAL_MS = 30_000L; // 30초
+    private static final long PROCESS_INTERVAL_MS = 5_000L; // 5초
     private static final long MAX_PENDING_BYTES   = 500_000L; // ~500KB
 
     private byte[] initSegment = null;
