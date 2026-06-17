@@ -18,6 +18,9 @@ public class Meeting {
     @Column(name = "meeting_id", columnDefinition = "uuid", updatable = false)
     private UUID meetingId;
 
+    @Column(name = "user_id", columnDefinition = "uuid")
+    private UUID userId;
+
     @Column(length = 255)
     private String title;
 
