@@ -7,16 +7,14 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface MeetingRepository extends JpaRepository<Meeting, String> {
+import java.util.List;
+import java.util.UUID;
+
+public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
+
+    List<Meeting> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
     @Modifying
-    @Query("UPDATE Meeting m SET m.status = :status WHERE m.id = :id")
-    void updateStatus(@Param("id") String id, @Param("status") MeetingStatus status);
-
-    @Modifying
-    @Query("UPDATE Meeting m SET m.status = :status, m.errorCode = :code, m.errorDetail = :detail WHERE m.id = :id")
-    void updateStatusWithError(@Param("id") String id,
-                               @Param("status") MeetingStatus status,
-                               @Param("code") String errorCode,
-                               @Param("detail") String errorDetail);
+    @Query("UPDATE Meeting m SET m.status = :status WHERE m.meetingId = :id")
+    void updateStatus(@Param("id") UUID id, @Param("status") MeetingStatus status);
 }

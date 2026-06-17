@@ -5,9 +5,8 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "meetings")
@@ -15,27 +14,36 @@ import java.util.List;
 public class Meeting {
 
     @Id
-    @Column(length = 36)
-    private String id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "meeting_id", columnDefinition = "uuid", updatable = false)
+    private UUID meetingId;
 
-    @Column(nullable = false)
-    private String filename;
+    /** profiles.id 참조 (nullable — 인증 없이 업로드 시) */
+    @Column(name = "user_id", columnDefinition = "uuid")
+    private UUID userId;
+
+    @Column(length = 255)
+    private String title;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "meeting_type", nullable = false)
+    private MeetingType meetingType;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private MeetingStatus status;
 
-    private String errorCode;
-    private String errorDetail;
-    private String engineUsed;
+    @Column(name = "duration_seconds")
+    private Integer durationSeconds;
+
+    @Column(name = "meeting_date", columnDefinition = "timestamptz")
+    private OffsetDateTime meetingDate;
 
     @CreationTimestamp
-    private LocalDateTime createdAt;
+    @Column(name = "created_at", updatable = false, columnDefinition = "timestamptz")
+    private OffsetDateTime createdAt;
 
     @UpdateTimestamp
-    private LocalDateTime updatedAt;
-
-    @OneToMany(mappedBy = "meeting", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @Builder.Default
-    private List<TranscriptSegment> segments = new ArrayList<>();
+    @Column(name = "updated_at", columnDefinition = "timestamptz")
+    private OffsetDateTime updatedAt;
 }

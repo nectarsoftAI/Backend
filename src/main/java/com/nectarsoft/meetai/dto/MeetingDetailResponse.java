@@ -1,52 +1,55 @@
 package com.nectarsoft.meetai.dto;
 
 import com.nectarsoft.meetai.model.Meeting;
-import com.nectarsoft.meetai.model.TranscriptSegment;
+import com.nectarsoft.meetai.model.Transcript;
 import lombok.Builder;
 import lombok.Value;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Value
 @Builder
 public class MeetingDetailResponse {
-    String meetingId;
-    String filename;
+    UUID meetingId;
+    String title;
+    String meetingType;
     String status;
-    String engineUsed;
-    LocalDateTime createdAt;
-    List<SegmentDto> segments;
+    Integer durationSeconds;
+    OffsetDateTime meetingDate;
+    OffsetDateTime createdAt;
+    List<TranscriptDto> transcripts;
 
     @Value
     @Builder
-    public static class SegmentDto {
-        String speakerId;
+    public static class TranscriptDto {
+        String speakerLabel;
+        String speakerDisplay;
         double startSec;
         double endSec;
-        String text;
-        double confidence;
-        boolean lowConfidence;
+        String content;
     }
 
-    public static MeetingDetailResponse from(Meeting m) {
-        List<SegmentDto> segs = m.getSegments().stream()
-                .map(s -> SegmentDto.builder()
-                        .speakerId(s.getSpeakerId())
-                        .startSec(s.getStartSec())
-                        .endSec(s.getEndSec())
-                        .text(s.getText())
-                        .confidence(s.getConfidence())
-                        .lowConfidence(s.isLowConfidence())
+    public static MeetingDetailResponse from(Meeting m, List<Transcript> transcripts) {
+        List<TranscriptDto> dtos = transcripts.stream()
+                .map(t -> TranscriptDto.builder()
+                        .speakerLabel(t.getSpeakerLabel())
+                        .speakerDisplay(t.getSpeakerDisplay())
+                        .startSec(t.getStartSec())
+                        .endSec(t.getEndSec())
+                        .content(t.getContent())
                         .build())
                 .toList();
         return MeetingDetailResponse.builder()
-                .meetingId(m.getId())
-                .filename(m.getFilename())
+                .meetingId(m.getMeetingId())
+                .title(m.getTitle())
+                .meetingType(m.getMeetingType().name())
                 .status(m.getStatus().name())
-                .engineUsed(m.getEngineUsed())
+                .durationSeconds(m.getDurationSeconds())
+                .meetingDate(m.getMeetingDate())
                 .createdAt(m.getCreatedAt())
-                .segments(segs)
+                .transcripts(dtos)
                 .build();
     }
 }

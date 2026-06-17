@@ -2,6 +2,10 @@ package com.nectarsoft.meetai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.websocket.WebSocketManager;
+import com.nectarsoft.meetai.model.*;
+import com.nectarsoft.meetai.repository.MeetingRepository;
+import com.nectarsoft.meetai.repository.SttResultRepository;
+import com.nectarsoft.meetai.repository.TranscriptRepository;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import com.nectarsoft.meetai.service.stt.SttService;
 import com.nectarsoft.meetai.storage.FileStorage;
@@ -11,8 +15,11 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * @Async는 같은 빈 내부 호출 시 프록시를 우회하므로 별도 컴포넌트로 분리
@@ -25,6 +32,9 @@ public class LiveBufferProcessor {
     private final SttService sttService;
     private final WebSocketManager wsManager;
     private final FileStorage fileStorage;
+    private final MeetingRepository meetingRepo;
+    private final SttResultRepository sttResultRepo;
+    private final TranscriptRepository transcriptRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Async
@@ -39,10 +49,37 @@ public class LiveBufferProcessor {
             List<RawSegment> segments = sttService.process(tmpFile);
             fileStorage.delete(tmpFile);
 
+            // DB 저장
+            UUID meetingId = UUID.fromString(sessionId);
+            Meeting meeting = meetingRepo.findById(meetingId).orElse(null);
+            if (meeting != null && !segments.isEmpty()) {
+                SttResult sttResult = SttResult.builder()
+                        .meeting(meeting)
+                        .processingStatus(SttProcessingStatus.COMPLETED)
+                        .processedAt(OffsetDateTime.now())
+                        .build();
+                sttResultRepo.save(sttResult);
+
+                List<Transcript> transcripts = new ArrayList<>();
+                for (RawSegment seg : segments) {
+                    transcripts.add(Transcript.builder()
+                            .meeting(meeting)
+                            .sttResult(sttResult)
+                            .speakerLabel(seg.getSpeakerId())
+                            .speakerDisplay(seg.getSpeakerId())
+                            .startSec(seg.getStartSec())
+                            .endSec(seg.getEndSec())
+                            .content(seg.getText())
+                            .build());
+                }
+                transcriptRepo.saveAll(transcripts);
+            }
+
+            // WebSocket 브로드캐스트
             for (RawSegment seg : segments) {
                 String json = objectMapper.writeValueAsString(Map.of(
                         "type", "segment",
-                        "speaker_id", seg.getSpeakerId(),
+                        "speaker_label", seg.getSpeakerId(),
                         "start_sec", seg.getStartSec(),
                         "end_sec", seg.getEndSec(),
                         "text", seg.getText(),

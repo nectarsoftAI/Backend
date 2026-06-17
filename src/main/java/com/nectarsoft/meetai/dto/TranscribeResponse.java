@@ -5,33 +5,36 @@ import lombok.Builder;
 import lombok.Value;
 
 import java.util.List;
+import java.util.UUID;
 
 @Value
 @Builder
 public class TranscribeResponse {
-    String meetingId;
+    UUID meetingId;
     String engineUsed;
     int segmentCount;
-    List<SegmentDto> segments;
+    List<TranscriptDto> transcripts;
 
     @Value
     @Builder
-    public static class SegmentDto {
-        String speakerId;
+    public static class TranscriptDto {
+        String speakerLabel;
+        String speakerDisplay;
         double startSec;
         double endSec;
-        String text;
+        String content;
         double confidence;
         boolean lowConfidence;
     }
 
-    public static TranscribeResponse from(List<RawSegment> raws, String engine, String meetingId) {
-        List<SegmentDto> dtos = raws.stream()
-                .map(r -> SegmentDto.builder()
-                        .speakerId(r.getSpeakerId())
+    public static TranscribeResponse from(List<RawSegment> raws, String engine, UUID meetingId) {
+        List<TranscriptDto> dtos = raws.stream()
+                .map(r -> TranscriptDto.builder()
+                        .speakerLabel(r.getSpeakerId())
+                        .speakerDisplay(r.getSpeakerId())
                         .startSec(r.getStartSec())
                         .endSec(r.getEndSec())
-                        .text(r.getText())
+                        .content(r.getText())
                         .confidence(r.getConfidence())
                         .lowConfidence(r.isLowConfidence())
                         .build())
@@ -40,7 +43,7 @@ public class TranscribeResponse {
                 .meetingId(meetingId)
                 .engineUsed(engine)
                 .segmentCount(dtos.size())
-                .segments(dtos)
+                .transcripts(dtos)
                 .build();
     }
 }
