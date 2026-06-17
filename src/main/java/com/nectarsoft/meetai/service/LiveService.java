@@ -24,9 +24,7 @@ public class LiveService {
     private final ConcurrentHashMap<UUID, SessionBuffer> buffers = new ConcurrentHashMap<>();
 
     public Meeting createSession() {
-        // 인증 전 임시 익명 사용자 ID
         Meeting meeting = Meeting.builder()
-                .userId(UUID.fromString("00000000-0000-0000-0000-000000000001"))
                 .meetingType(MeetingType.REALTIME)
                 .status(MeetingStatus.LIVE)
                 .meetingDate(OffsetDateTime.now())
