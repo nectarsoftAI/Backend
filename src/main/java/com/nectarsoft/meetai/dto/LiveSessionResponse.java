@@ -1,21 +1,23 @@
 package com.nectarsoft.meetai.dto;
 
-import com.nectarsoft.meetai.model.LiveSession;
+import com.nectarsoft.meetai.model.Meeting;
 import lombok.Builder;
 import lombok.Value;
+
+import java.util.UUID;
 
 @Value
 @Builder
 public class LiveSessionResponse {
-    String sessionId;
+    UUID meetingId;
     String status;
     String wsUrl;
 
-    public static LiveSessionResponse from(LiveSession session, String baseUrl) {
+    public static LiveSessionResponse from(Meeting meeting, String baseUrl) {
         return LiveSessionResponse.builder()
-                .sessionId(session.getId())
-                .status(session.getStatus().name())
-                .wsUrl("ws://" + baseUrl + "/api/v1/live/ws/" + session.getId())
+                .meetingId(meeting.getMeetingId())
+                .status(meeting.getStatus().name())
+                .wsUrl("ws://" + baseUrl + "/api/v1/live/ws/" + meeting.getMeetingId())
                 .build();
     }
 }

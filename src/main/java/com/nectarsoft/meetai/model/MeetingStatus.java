@@ -1,8 +1,5 @@
 package com.nectarsoft.meetai.model;
 
 public enum MeetingStatus {
-    PENDING,
-    PROCESSING,
-    COMPLETED,
-    FAILED
+    PENDING, LIVE, PROCESSING, COMPLETED, FAILED
 }
