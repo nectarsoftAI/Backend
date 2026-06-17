@@ -1,5 +1,6 @@
 package com.nectarsoft.meetai.controller;
 
+import com.nectarsoft.meetai.core.UserIdCounter;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.model.*;
 import com.nectarsoft.meetai.repository.AudioFileRepository;
@@ -34,6 +35,7 @@ public class SttController {
     private final AudioService audioService;
     private final SttService sttService;
     private final MeetingRepository meetingRepo;
+    private final UserIdCounter userIdCounter;
     private final AudioFileRepository audioFileRepo;
     private final SttResultRepository sttResultRepo;
     private final TranscriptRepository transcriptRepo;
@@ -47,6 +49,7 @@ public class SttController {
 
         // meeting 생성
         Meeting meeting = Meeting.builder()
+                .userId(userIdCounter.next())
                 .title(file.getOriginalFilename())
                 .meetingType(MeetingType.UPLOAD)
                 .status(MeetingStatus.PROCESSING)
