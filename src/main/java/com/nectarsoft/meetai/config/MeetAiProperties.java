@@ -15,6 +15,7 @@ public class MeetAiProperties {
     private Audio audio = new Audio();
     private Stt stt = new Stt();
     private Openai openai = new Openai();
+    private AssemblyAi assemblyai = new AssemblyAi();
     private Diarization diarization = new Diarization();
     private Live live = new Live();
 
@@ -55,6 +56,13 @@ public class MeetAiProperties {
         private String apiKey = "";
         private String whisperModel = "whisper-1";
         private String whisperLanguage = "ko";
+    }
+
+    @Data
+    public static class AssemblyAi {
+        private String apiKey = "";
+        private String languageCode = "ko";
+        private int speakersExpected = 2;
     }
 
     @Data

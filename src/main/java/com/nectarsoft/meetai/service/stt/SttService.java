@@ -63,8 +63,9 @@ public class SttService {
         return switch (engine) {
             case "openai_whisper" -> new OpenAiWhisperEngine(props);
             case "gpt4o" -> new OpenAiGpt4oEngine(props);
+            case "assemblyai" -> new AssemblyAiEngine(props);
             default -> throw new IllegalArgumentException(
-                    "알 수 없는 STT 엔진: '" + engine + "' | 허용값: openai_whisper, gpt4o");
+                    "알 수 없는 STT 엔진: '" + engine + "' | 허용값: openai_whisper, gpt4o, assemblyai");
         };
     }
 }
