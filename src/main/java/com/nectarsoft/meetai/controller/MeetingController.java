@@ -2,19 +2,24 @@ package com.nectarsoft.meetai.controller;
 
 import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
+import com.nectarsoft.meetai.dto.MeetingListResponse;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.Transcript;
+import com.nectarsoft.meetai.repository.AudioFileRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
+import com.nectarsoft.meetai.repository.SttResultRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
 
-@Tag(name = "Meetings", description = "회의 결과 조회")
+@Tag(name = "Meetings", description = "회의 결과 조회/삭제")
 @RestController
 @RequestMapping("/api/v1/meetings")
 @RequiredArgsConstructor
@@ -22,6 +27,19 @@ public class MeetingController {
 
     private final MeetingRepository meetingRepo;
     private final TranscriptRepository transcriptRepo;
+    private final SttResultRepository sttResultRepo;
+    private final AudioFileRepository audioFileRepo;
+
+    @Operation(summary = "전체 회의록 목록 조회")
+    @GetMapping
+    public MeetingListResponse listMeetings() {
+        List<MeetingListResponse.MeetingItem> items = meetingRepo
+                .findAllByOrderByCreatedAtDesc()
+                .stream()
+                .map(MeetingListResponse.MeetingItem::from)
+                .toList();
+        return MeetingListResponse.builder().meetings(items).build();
+    }
 
     @Operation(summary = "회의 결과 상세 조회 (대화록 포함)")
     @GetMapping("/{meetingId}")
@@ -30,5 +48,19 @@ public class MeetingController {
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
         return MeetingDetailResponse.from(meeting, transcripts);
+    }
+
+    @Operation(summary = "회의 삭제")
+    @DeleteMapping("/{meetingId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void deleteMeeting(@PathVariable UUID meetingId) {
+        if (!meetingRepo.existsById(meetingId)) {
+            throw new Exceptions.MeetingNotFoundError(meetingId.toString());
+        }
+        transcriptRepo.deleteByMeetingMeetingId(meetingId);
+        sttResultRepo.deleteByMeetingMeetingId(meetingId);
+        audioFileRepo.deleteByMeetingMeetingId(meetingId);
+        meetingRepo.deleteById(meetingId);
     }
 }

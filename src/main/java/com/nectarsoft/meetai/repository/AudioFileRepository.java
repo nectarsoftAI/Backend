@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface AudioFileRepository extends JpaRepository<AudioFile, Long> {
 
     List<AudioFile> findByMeetingMeetingId(UUID meetingId);
+
+    void deleteByMeetingMeetingId(UUID meetingId);
 }
