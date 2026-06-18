@@ -5,8 +5,9 @@ spring:
     username: ${PGUSER}
     password: ${PGPASSWORD}
   jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: create
+      ddl-auto: update
   h2:
     console:
       enabled: false
