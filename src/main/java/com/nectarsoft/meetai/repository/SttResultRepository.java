@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface SttResultRepository extends JpaRepository<SttResult, Long> {
 
     List<SttResult> findByMeetingMeetingIdOrderBySttIdAsc(UUID meetingId);
+
+    void deleteByMeetingMeetingId(UUID meetingId);
 }

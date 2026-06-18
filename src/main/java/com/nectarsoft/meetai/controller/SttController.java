@@ -43,14 +43,16 @@ public class SttController {
     @Operation(summary = "파일 업로드 → STT 변환",
                description = "오디오 파일을 업로드하면 Whisper API로 변환한 텍스트를 즉시 반환하고 DB에 저장합니다.")
     @PostMapping(value = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public TranscribeResponse transcribe(@RequestParam("file") MultipartFile file) throws IOException {
+    public TranscribeResponse transcribe(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "title", required = false) String title) throws IOException {
         Path saved = audioService.saveUpload(file);
         AudioContext ctx = audioService.preprocess(saved);
 
         // meeting 생성
         Meeting meeting = Meeting.builder()
                 .userId(userIdCounter.next())
-                .title(file.getOriginalFilename())
+                .title(title != null && !title.isBlank() ? title : file.getOriginalFilename())
                 .meetingType(MeetingType.UPLOAD)
                 .status(MeetingStatus.PROCESSING)
                 .meetingDate(OffsetDateTime.now())

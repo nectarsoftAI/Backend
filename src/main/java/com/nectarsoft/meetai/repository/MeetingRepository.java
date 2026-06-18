@@ -12,6 +12,8 @@ import java.util.UUID;
 
 public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
 
+    List<Meeting> findAllByOrderByCreatedAtDesc();
+
     List<Meeting> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
     @Modifying
