@@ -27,6 +27,11 @@ meetai:
     whisper-model: whisper-1
     whisper-language: ko
 
+  assemblyai:
+    api-key: ${ASSEMBLYAI_API_KEY:}
+    language-code: ko
+    speakers-expected: 2
+
   diarization:
     min-speakers: 1
     max-speakers: 10
