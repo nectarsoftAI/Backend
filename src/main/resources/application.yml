@@ -42,15 +42,17 @@ meetai:
     chunk-expected-sample-rate: 16000
 
 # ── Database ─────────────────────────────────────────────────────────
+# Railway: SPRING_DATASOURCE_URL 환경변수로 PostgreSQL(Supabase) 연결
+# 로컬:    환경변수 없으면 H2 파일 DB 사용
 spring:
   datasource:
-    url: jdbc:h2:file:./meetai_test;AUTO_SERVER=TRUE
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./meetai_test;AUTO_SERVER=TRUE}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.h2.Driver}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
   h2:
     console:
-      enabled: true          # http://localhost:8000/h2-console
+      enabled: ${H2_CONSOLE_ENABLED:true}
   jpa:
     hibernate:
       ddl-auto: update
