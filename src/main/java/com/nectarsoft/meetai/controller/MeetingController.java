@@ -4,9 +4,11 @@ import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.MeetingListResponse;
 import com.nectarsoft.meetai.model.Meeting;
+import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.Transcript;
 import com.nectarsoft.meetai.repository.AudioFileRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
+import com.nectarsoft.meetai.repository.MeetingSummaryRepository;
 import com.nectarsoft.meetai.repository.SttResultRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Tag(name = "Meetings", description = "회의 결과 조회/삭제")
@@ -29,6 +32,7 @@ public class MeetingController {
     private final TranscriptRepository transcriptRepo;
     private final SttResultRepository sttResultRepo;
     private final AudioFileRepository audioFileRepo;
+    private final MeetingSummaryRepository meetingSummaryRepo;
 
     @Operation(summary = "전체 회의록 목록 조회")
     @GetMapping
@@ -36,7 +40,11 @@ public class MeetingController {
         List<MeetingListResponse.MeetingItem> items = meetingRepo
                 .findAllByOrderByCreatedAtDesc()
                 .stream()
-                .map(MeetingListResponse.MeetingItem::from)
+                .map(m -> {
+                    List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(m.getMeetingId());
+                    Optional<MeetingSummary> summary = meetingSummaryRepo.findByMeetingMeetingId(m.getMeetingId());
+                    return MeetingListResponse.MeetingItem.from(m, transcripts, summary);
+                })
                 .toList();
         return MeetingListResponse.builder().meetings(items).build();
     }
@@ -47,7 +55,8 @@ public class MeetingController {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
-        return MeetingDetailResponse.from(meeting, transcripts);
+        Optional<MeetingSummary> summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
+        return MeetingDetailResponse.from(meeting, transcripts, summary);
     }
 
     @Operation(summary = "회의 삭제")
