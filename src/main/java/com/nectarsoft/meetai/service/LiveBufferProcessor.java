@@ -97,7 +97,7 @@ public class LiveBufferProcessor {
                     List<Transcript> allTranscripts = transcriptRepo
                             .findByMeetingMeetingIdOrderByStartSecAsc(UUID.fromString(sessionId));
                     if (!allTranscripts.isEmpty()) {
-                        llmService.summarizeAsync(meeting, allTranscripts);
+                        llmService.summarizeAsync(meeting.getMeetingId(), allTranscripts);
                     }
                 }
                 wsManager.broadcast(sessionId, objectMapper.writeValueAsString(

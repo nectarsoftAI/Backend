@@ -1,13 +1,9 @@
 package com.nectarsoft.meetai.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.config.MeetAiProperties;
-import com.nectarsoft.meetai.model.Meeting;
-import com.nectarsoft.meetai.model.MeetingSummary;
-import com.nectarsoft.meetai.model.SttProcessingStatus;
+import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.model.Transcript;
-import com.nectarsoft.meetai.repository.MeetingSummaryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -15,7 +11,6 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,22 +23,19 @@ public class LlmService {
 
     private final RestTemplate restTemplate;
     private final MeetAiProperties props;
-    private final MeetingSummaryRepository meetingSummaryRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Async
-    public void summarizeAsync(Meeting meeting, List<Transcript> transcripts) {
+    public void summarizeAsync(UUID meetingId, List<Transcript> transcripts) {
         try {
-            summarize(meeting, transcripts);
+            summarize(meetingId, transcripts);
         } catch (Exception e) {
-            log.error("[LLM] 비동기 요약 실패 — meetingId={}: {}", meeting.getMeetingId(), e.getMessage());
+            log.error("[LLM] 비동기 요약 실패 — meetingId={}: {}", meetingId, e.getMessage());
         }
     }
 
-    public MeetingSummary summarize(Meeting meeting, List<Transcript> transcripts) {
-        UUID meetingId = meeting.getMeetingId();
+    public TranscribeResponse.SummaryDto summarize(UUID meetingId, List<Transcript> transcripts) {
         log.info("[LLM] 요약 시작 — meetingId={}, segments={}", meetingId, transcripts.size());
-
         try {
             List<Map<String, Object>> transcriptList = transcripts.stream()
                     .map(t -> Map.<String, Object>of(
@@ -72,11 +64,10 @@ public class LlmService {
                 return null;
             }
 
+            // Python이 DB 저장 처리 — Java는 결과 반환만
             Map<String, Object> body = response.getBody();
-            MeetingSummary summary = buildSummary(meeting, body);
-            meetingSummaryRepo.save(summary);
-            log.info("[LLM] 요약 저장 완료 — meetingId={}", meetingId);
-            return summary;
+            log.info("[LLM] 요약 완료 — meetingId={}", meetingId);
+            return toSummaryDto(body);
 
         } catch (Exception e) {
             log.error("[LLM] 요약 중 오류 — meetingId={}: {}", meetingId, e.getMessage());
@@ -84,22 +75,19 @@ public class LlmService {
         }
     }
 
-    private MeetingSummary buildSummary(Meeting meeting, Map<String, Object> body) throws JsonProcessingException {
-        return MeetingSummary.builder()
-                .meeting(meeting)
-                .llmModel("gpt-4o")
-                .processingStatus(SttProcessingStatus.COMPLETED)
-                .keyPoints(toJson(body.get("summary")))
-                .decisions(toJson(body.get("decisions")))
-                .actionItems(toJson(body.get("action_items")))
-                .keywords(toJson(body.get("keywords")))
-                .rawResponse(objectMapper.writeValueAsString(body))
-                .processedAt(OffsetDateTime.now())
-                .build();
-    }
-
-    private String toJson(Object value) throws JsonProcessingException {
-        if (value == null) return null;
-        return objectMapper.writeValueAsString(value);
+    private TranscribeResponse.SummaryDto toSummaryDto(Map<String, Object> body) {
+        try {
+            return TranscribeResponse.SummaryDto.builder()
+                    .keyPoints(objectMapper.writeValueAsString(body.get("summary")))
+                    .decisions(objectMapper.writeValueAsString(body.get("decisions")))
+                    .actionItems(objectMapper.writeValueAsString(body.get("action_items")))
+                    .keywords(objectMapper.writeValueAsString(body.get("keywords")))
+                    .processingStatus("COMPLETED")
+                    .processedAt(null)
+                    .build();
+        } catch (Exception e) {
+            log.warn("[LLM] SummaryDto 변환 실패: {}", e.getMessage());
+            return null;
+        }
     }
 }

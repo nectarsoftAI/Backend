@@ -1,6 +1,5 @@
 package com.nectarsoft.meetai.dto;
 
-import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import lombok.Builder;
 import lombok.Value;
@@ -41,7 +40,7 @@ public class TranscribeResponse {
         OffsetDateTime processedAt;
     }
 
-    public static TranscribeResponse from(List<RawSegment> raws, String engine, UUID meetingId, MeetingSummary summary) {
+    public static TranscribeResponse from(List<RawSegment> raws, String engine, UUID meetingId, SummaryDto summary) {
         List<TranscriptDto> dtos = raws.stream()
                 .map(r -> TranscriptDto.builder()
                         .speakerLabel(r.getSpeakerId())
@@ -54,21 +53,12 @@ public class TranscribeResponse {
                         .build())
                 .toList();
 
-        SummaryDto summaryDto = summary == null ? null : SummaryDto.builder()
-                .keyPoints(summary.getKeyPoints())
-                .decisions(summary.getDecisions())
-                .actionItems(summary.getActionItems())
-                .keywords(summary.getKeywords())
-                .processingStatus(summary.getProcessingStatus().name())
-                .processedAt(summary.getProcessedAt())
-                .build();
-
         return TranscribeResponse.builder()
                 .meetingId(meetingId)
                 .engineUsed(engine)
                 .segmentCount(dtos.size())
                 .transcripts(dtos)
-                .summary(summaryDto)
+                .summary(summary)
                 .build();
     }
 }

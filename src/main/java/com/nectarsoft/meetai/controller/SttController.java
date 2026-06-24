@@ -105,9 +105,9 @@ public class SttController {
         log.info("[STT] 완료 — meetingId={}, segments={}", meeting.getMeetingId(), segments.size());
 
         // LLM 요약 (동기 — STT + 요약 한 번에 반환)
-        MeetingSummary summary = null;
+        TranscribeResponse.SummaryDto summary = null;
         if (!transcripts.isEmpty()) {
-            summary = llmService.summarize(meeting, transcripts);
+            summary = llmService.summarize(meeting.getMeetingId(), transcripts);
         }
 
         return TranscribeResponse.from(segments, sttService.engineName(), meeting.getMeetingId(), summary);
