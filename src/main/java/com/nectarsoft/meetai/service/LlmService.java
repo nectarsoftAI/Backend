@@ -3,9 +3,11 @@ package com.nectarsoft.meetai.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.config.MeetAiProperties;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
+import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.SttProcessingStatus;
 import com.nectarsoft.meetai.model.Transcript;
+import com.nectarsoft.meetai.repository.MeetingRepository;
 import com.nectarsoft.meetai.repository.MeetingSummaryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +16,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,6 +31,7 @@ public class LlmService {
     private final RestTemplate restTemplate;
     private final MeetAiProperties props;
     private final MeetingSummaryRepository meetingSummaryRepo;
+    private final MeetingRepository meetingRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Async
@@ -76,12 +80,38 @@ public class LlmService {
                 return null;
             }
 
-            log.info("[LLM] 요약 완료 — meetingId={}", meetingId);
-            return toSummaryDto(response.getBody());
+            TranscribeResponse.SummaryDto dto = toSummaryDto(response.getBody());
+            if (dto != null) {
+                saveToDb(meetingId, dto, existing);
+                log.info("[LLM] 요약 완료 및 DB 저장 — meetingId={}", meetingId);
+            }
+            return dto;
 
         } catch (Exception e) {
             log.error("[LLM] 요약 중 오류 — meetingId={}: {}", meetingId, e.getMessage());
             return null;
+        }
+    }
+
+    private void saveToDb(UUID meetingId, TranscribeResponse.SummaryDto dto,
+                          Optional<MeetingSummary> existing) {
+        try {
+            Meeting meeting = meetingRepo.findById(meetingId).orElse(null);
+            if (meeting == null) return;
+
+            MeetingSummary entity = existing.orElseGet(() ->
+                    MeetingSummary.builder().meeting(meeting).build());
+
+            entity.setLlmModel("gpt-4o");
+            entity.setProcessingStatus(SttProcessingStatus.COMPLETED);
+            entity.setKeyPoints(dto.getKeyPoints());
+            entity.setDecisions(dto.getDecisions());
+            entity.setActionItems(dto.getActionItems());
+            entity.setKeywords(dto.getKeywords());
+            entity.setProcessedAt(OffsetDateTime.now());
+            meetingSummaryRepo.save(entity);
+        } catch (Exception e) {
+            log.error("[LLM] DB 저장 실패 — meetingId={}: {}", meetingId, e.getMessage());
         }
     }
 
