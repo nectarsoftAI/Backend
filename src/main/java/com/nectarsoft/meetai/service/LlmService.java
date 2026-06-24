@@ -3,7 +3,10 @@ package com.nectarsoft.meetai.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.config.MeetAiProperties;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
+import com.nectarsoft.meetai.model.MeetingSummary;
+import com.nectarsoft.meetai.model.SttProcessingStatus;
 import com.nectarsoft.meetai.model.Transcript;
+import com.nectarsoft.meetai.repository.MeetingSummaryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +16,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -23,6 +27,7 @@ public class LlmService {
 
     private final RestTemplate restTemplate;
     private final MeetAiProperties props;
+    private final MeetingSummaryRepository meetingSummaryRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Async
@@ -35,6 +40,13 @@ public class LlmService {
     }
 
     public TranscribeResponse.SummaryDto summarize(UUID meetingId, List<Transcript> transcripts) {
+        // DB에 이미 완료된 요약이 있으면 LLM 호출 없이 반환
+        Optional<MeetingSummary> existing = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
+        if (existing.isPresent() && existing.get().getProcessingStatus() == SttProcessingStatus.COMPLETED) {
+            log.info("[LLM] DB 캐시 반환 — meetingId={}", meetingId);
+            return fromEntity(existing.get());
+        }
+
         log.info("[LLM] 요약 시작 — meetingId={}, segments={}", meetingId, transcripts.size());
         try {
             List<Map<String, Object>> transcriptList = transcripts.stream()
@@ -64,15 +76,24 @@ public class LlmService {
                 return null;
             }
 
-            // Python이 DB 저장 처리 — Java는 결과 반환만
-            Map<String, Object> body = response.getBody();
             log.info("[LLM] 요약 완료 — meetingId={}", meetingId);
-            return toSummaryDto(body);
+            return toSummaryDto(response.getBody());
 
         } catch (Exception e) {
             log.error("[LLM] 요약 중 오류 — meetingId={}: {}", meetingId, e.getMessage());
             return null;
         }
+    }
+
+    private TranscribeResponse.SummaryDto fromEntity(MeetingSummary entity) {
+        return TranscribeResponse.SummaryDto.builder()
+                .keyPoints(entity.getKeyPoints())
+                .decisions(entity.getDecisions())
+                .actionItems(entity.getActionItems())
+                .keywords(entity.getKeywords())
+                .processingStatus(entity.getProcessingStatus().name())
+                .processedAt(entity.getProcessedAt())
+                .build();
     }
 
     private TranscribeResponse.SummaryDto toSummaryDto(Map<String, Object> body) {
