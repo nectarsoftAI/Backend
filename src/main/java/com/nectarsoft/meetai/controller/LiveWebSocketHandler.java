@@ -3,62 +3,46 @@ package com.nectarsoft.meetai.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.websocket.WebSocketManager;
 import com.nectarsoft.meetai.service.LiveService;
-import jakarta.websocket.*;
-import jakarta.websocket.server.PathParam;
-import jakarta.websocket.server.ServerEndpoint;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.*;
+import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
+import java.nio.ByteBuffer;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
-@ServerEndpoint("/api/v1/live/ws/{meetingId}")
-public class LiveWebSocketHandler {
+@RequiredArgsConstructor
+public class LiveWebSocketHandler extends AbstractWebSocketHandler {
 
-    // @ServerEndpoint는 연결마다 새 인스턴스 생성 → static으로 보관
-    private static WebSocketManager wsManager;
-    private static LiveService liveService;
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private final LiveService liveService;
+    private final WebSocketManager wsManager;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // WebSocket Session ID → Meeting ID 매핑
-    private static final ConcurrentHashMap<String, String> sessionToMeeting = new ConcurrentHashMap<>();
+    @Override
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        String meetingId = meetingId(session);
+        session.setBinaryMessageSizeLimit(10 * 1024 * 1024);
+        session.setTextMessageSizeLimit(64 * 1024);
 
-    public LiveWebSocketHandler() {}
-
-    /** MeetAiApplication(ApplicationReadyEvent)에서 호출 */
-    public static void init(WebSocketManager wm, LiveService ls) {
-        wsManager = wm;
-        liveService = ls;
-        log.info("[WS] LiveWebSocketHandler 의존성 초기화 완료");
-    }
-
-    @OnOpen
-    public void onOpen(Session session, @PathParam("meetingId") String meetingId) {
-        session.setMaxBinaryMessageBufferSize(10 * 1024 * 1024);
-        session.setMaxTextMessageBufferSize(64 * 1024);
-
-        sessionToMeeting.put(session.getId(), meetingId);
         wsManager.register(meetingId, session);
 
-        try {
-            String json = objectMapper.writeValueAsString(Map.of(
-                    "type", "session_ready",
-                    "meeting_id", meetingId
-            ));
-            session.getBasicRemote().sendText(json);
-        } catch (Exception e) {
-            log.error("[WS] session_ready 전송 실패: {}", e.getMessage());
+        String json = objectMapper.writeValueAsString(
+                Map.of("type", "session_ready", "meeting_id", meetingId));
+        synchronized (session) {
+            session.sendMessage(new TextMessage(json));
         }
-
         log.info("[WS] 연결 — meetingId={}", meetingId);
     }
 
-    @OnMessage
-    public void onBinaryMessage(byte[] data, Session session) {
-        String meetingId = sessionToMeeting.get(session.getId());
-        if (meetingId == null) return;
+    @Override
+    protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
+        String meetingId = meetingId(session);
+        ByteBuffer payload = message.getPayload();
+        byte[] data = new byte[payload.remaining()];
+        payload.get(data);
 
         log.debug("[WS] 바이너리 수신 — meetingId={}, bytes={}", meetingId, data.length);
         try {
@@ -68,29 +52,27 @@ public class LiveWebSocketHandler {
         }
     }
 
-    @OnMessage
-    public void onTextMessage(String message, Session session) {
-        String meetingId = sessionToMeeting.get(session.getId());
-        if (meetingId == null) return;
-
-        if (message.contains("\"end\"")) {
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        String meetingId = meetingId(session);
+        if (message.getPayload().contains("\"end\"")) {
             liveService.endSession(meetingId);
         }
     }
 
-    @OnClose
-    public void onClose(Session session, CloseReason reason) {
-        String meetingId = sessionToMeeting.remove(session.getId());
-        if (meetingId != null) {
-            wsManager.remove(meetingId, session);
-            log.info("[WS] 연결 종료 — meetingId={}, reason={}", meetingId,
-                    reason != null ? reason.getReasonPhrase() : "null");
-        }
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        String meetingId = meetingId(session);
+        wsManager.remove(meetingId, session);
+        log.info("[WS] 연결 종료 — meetingId={}, status={}", meetingId, status);
     }
 
-    @OnError
-    public void onError(Session session, Throwable error) {
-        String meetingId = sessionToMeeting.get(session.getId());
-        log.error("[WS] 오류 — meetingId={}: {}", meetingId, error.getMessage());
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        log.error("[WS] 오류 — meetingId={}: {}", meetingId(session), exception.getMessage());
+    }
+
+    private String meetingId(WebSocketSession session) {
+        return (String) session.getAttributes().get("meetingId");
     }
 }
