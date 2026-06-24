@@ -18,6 +18,12 @@ public class MeetAiProperties {
     private AssemblyAi assemblyai = new AssemblyAi();
     private Diarization diarization = new Diarization();
     private Live live = new Live();
+    private Llm llm = new Llm();
+
+    @Data
+    public static class Llm {
+        private String url = "https://llm-production-6c26.up.railway.app";
+    }
 
     @Data
     public static class Storage {

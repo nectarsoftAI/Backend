@@ -9,6 +9,7 @@ import com.nectarsoft.meetai.repository.TranscriptRepository;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import com.nectarsoft.meetai.service.stt.SttService;
 import com.nectarsoft.meetai.storage.FileStorage;
+import com.nectarsoft.meetai.service.LlmService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -35,6 +36,7 @@ public class LiveBufferProcessor {
     private final MeetingRepository meetingRepo;
     private final SttResultRepository sttResultRepo;
     private final TranscriptRepository transcriptRepo;
+    private final LlmService llmService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Async
@@ -90,6 +92,14 @@ public class LiveBufferProcessor {
             log.info("[Live] 브로드캐스트 완료 — {} 구간", segments.size());
 
             if (isFinal) {
+                // 세션 종료 시 전체 transcript 조회 후 LLM 요약 비동기 호출
+                if (meeting != null) {
+                    List<Transcript> allTranscripts = transcriptRepo
+                            .findByMeetingMeetingIdOrderByStartSecAsc(UUID.fromString(sessionId));
+                    if (!allTranscripts.isEmpty()) {
+                        llmService.summarizeAsync(meeting, allTranscripts);
+                    }
+                }
                 wsManager.broadcast(sessionId, objectMapper.writeValueAsString(
                         Map.of("type", "session_ended")));
                 wsManager.closeAll(sessionId);

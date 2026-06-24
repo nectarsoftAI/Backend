@@ -1,9 +1,11 @@
 package com.nectarsoft.meetai.dto;
 
+import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import lombok.Builder;
 import lombok.Value;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -14,6 +16,7 @@ public class TranscribeResponse {
     String engineUsed;
     int segmentCount;
     List<TranscriptDto> transcripts;
+    SummaryDto summary;
 
     @Value
     @Builder
@@ -27,7 +30,18 @@ public class TranscribeResponse {
         boolean lowConfidence;
     }
 
-    public static TranscribeResponse from(List<RawSegment> raws, String engine, UUID meetingId) {
+    @Value
+    @Builder
+    public static class SummaryDto {
+        String keyPoints;
+        String decisions;
+        String actionItems;
+        String keywords;
+        String processingStatus;
+        OffsetDateTime processedAt;
+    }
+
+    public static TranscribeResponse from(List<RawSegment> raws, String engine, UUID meetingId, MeetingSummary summary) {
         List<TranscriptDto> dtos = raws.stream()
                 .map(r -> TranscriptDto.builder()
                         .speakerLabel(r.getSpeakerId())
@@ -39,11 +53,22 @@ public class TranscribeResponse {
                         .lowConfidence(r.isLowConfidence())
                         .build())
                 .toList();
+
+        SummaryDto summaryDto = summary == null ? null : SummaryDto.builder()
+                .keyPoints(summary.getKeyPoints())
+                .decisions(summary.getDecisions())
+                .actionItems(summary.getActionItems())
+                .keywords(summary.getKeywords())
+                .processingStatus(summary.getProcessingStatus().name())
+                .processedAt(summary.getProcessedAt())
+                .build();
+
         return TranscribeResponse.builder()
                 .meetingId(meetingId)
                 .engineUsed(engine)
                 .segmentCount(dtos.size())
                 .transcripts(dtos)
+                .summary(summaryDto)
                 .build();
     }
 }

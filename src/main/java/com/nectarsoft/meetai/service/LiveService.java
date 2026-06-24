@@ -10,7 +10,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,8 +28,10 @@ public class LiveService {
     private final ConcurrentHashMap<UUID, SessionBuffer> buffers = new ConcurrentHashMap<>();
 
     public Meeting createSession() {
+        String title = "라이브 회의 " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
         Meeting meeting = Meeting.builder()
                 .userId(userIdCounter.next())
+                .title(title)
                 .meetingType(MeetingType.REALTIME)
                 .status(MeetingStatus.LIVE)
                 .meetingDate(OffsetDateTime.now())
