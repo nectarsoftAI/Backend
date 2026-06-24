@@ -7,6 +7,7 @@ import com.nectarsoft.meetai.repository.AudioFileRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
 import com.nectarsoft.meetai.repository.SttResultRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
+import com.nectarsoft.meetai.service.LlmService;
 import com.nectarsoft.meetai.service.audio.AudioContext;
 import com.nectarsoft.meetai.service.audio.AudioService;
 import com.nectarsoft.meetai.service.stt.RawSegment;
@@ -39,9 +40,10 @@ public class SttController {
     private final AudioFileRepository audioFileRepo;
     private final SttResultRepository sttResultRepo;
     private final TranscriptRepository transcriptRepo;
+    private final LlmService llmService;
 
-    @Operation(summary = "파일 업로드 → STT 변환",
-               description = "오디오 파일을 업로드하면 Whisper API로 변환한 텍스트를 즉시 반환하고 DB에 저장합니다.")
+    @Operation(summary = "파일 업로드 → STT + LLM 요약",
+               description = "오디오 파일을 업로드하면 STT 변환 및 LLM 요약을 수행하고 둘 다 반환합니다.")
     @PostMapping(value = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public TranscribeResponse transcribe(
             @RequestParam("file") MultipartFile file,
@@ -101,6 +103,13 @@ public class SttController {
         meetingRepo.save(meeting);
 
         log.info("[STT] 완료 — meetingId={}, segments={}", meeting.getMeetingId(), segments.size());
-        return TranscribeResponse.from(segments, sttService.engineName(), meeting.getMeetingId());
+
+        // LLM 요약 (동기 — STT + 요약 한 번에 반환)
+        TranscribeResponse.SummaryDto summary = null;
+        if (!transcripts.isEmpty()) {
+            summary = llmService.summarize(meeting.getMeetingId(), transcripts);
+        }
+
+        return TranscribeResponse.from(segments, sttService.engineName(), meeting.getMeetingId(), summary);
     }
 }

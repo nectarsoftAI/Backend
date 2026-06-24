@@ -40,21 +40,15 @@ public class MeetingDetailResponse {
     @Value
     @Builder
     public static class SummaryDto {
-        List<String> keyPoints;
-        List<String> decisions;
-        List<String> keywords;
-        List<ActionItemDto> actionItems;
-
-        @Value
-        @Builder
-        public static class ActionItemDto {
-            String task;
-            String assignee;
-            String due;
-        }
+        String keyPoints;
+        String decisions;
+        String actionItems;
+        String keywords;
+        String processingStatus;
+        OffsetDateTime processedAt;
     }
 
-    public static MeetingDetailResponse from(Meeting m, List<Transcript> transcripts, Optional<MeetingSummary> summaryOpt) {
+    public static MeetingDetailResponse from(Meeting m, List<Transcript> transcripts, MeetingSummary summary) {
         List<TranscriptDto> dtos = transcripts.stream()
                 .map(t -> TranscriptDto.builder()
                         .speakerLabel(t.getSpeakerLabel())
@@ -65,13 +59,14 @@ public class MeetingDetailResponse {
                         .build())
                 .toList();
 
-        SummaryDto summaryDto = summaryOpt.map(s -> SummaryDto.builder()
-                .keyPoints(parseStringList(s.getKeyPoints()))
-                .decisions(parseStringList(s.getDecisions()))
-                .keywords(parseStringList(s.getKeywords()))
-                .actionItems(parseActionItems(s.getActionItems()))
-                .build()
-        ).orElse(null);
+        SummaryDto summaryDto = summary == null ? null : SummaryDto.builder()
+                .keyPoints(summary.getKeyPoints())
+                .decisions(summary.getDecisions())
+                .actionItems(summary.getActionItems())
+                .keywords(summary.getKeywords())
+                .processingStatus(summary.getProcessingStatus().name())
+                .processedAt(summary.getProcessedAt())
+                .build();
 
         return MeetingDetailResponse.builder()
                 .meetingId(m.getMeetingId())

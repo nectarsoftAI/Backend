@@ -3,8 +3,10 @@ package com.nectarsoft.meetai.controller;
 import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.MeetingListResponse;
+import com.nectarsoft.meetai.dto.SaveSummaryRequest;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingSummary;
+import com.nectarsoft.meetai.model.SttProcessingStatus;
 import com.nectarsoft.meetai.model.Transcript;
 import com.nectarsoft.meetai.repository.AudioFileRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
@@ -18,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -55,8 +58,29 @@ public class MeetingController {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
-        Optional<MeetingSummary> summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
+        MeetingSummary summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId).orElse(null);
         return MeetingDetailResponse.from(meeting, transcripts, summary);
+    }
+
+    @Operation(summary = "LLM 요약 저장 (Python LLM 서버가 호출)")
+    @PostMapping("/{meetingId}/summary")
+    @ResponseStatus(HttpStatus.CREATED)
+    public void saveSummary(@PathVariable UUID meetingId, @RequestBody SaveSummaryRequest req) {
+        Meeting meeting = meetingRepo.findById(meetingId)
+                .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
+
+        MeetingSummary summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId)
+                .orElseGet(() -> MeetingSummary.builder().meeting(meeting).build());
+
+        summary.setLlmModel("gpt-4o");
+        summary.setProcessingStatus(SttProcessingStatus.COMPLETED);
+        summary.setKeyPoints(req.getKeyPoints());
+        summary.setDecisions(req.getDecisions());
+        summary.setActionItems(req.getActionItems());
+        summary.setKeywords(req.getKeywords());
+        summary.setRawResponse(req.getRawResponse());
+        summary.setProcessedAt(OffsetDateTime.now());
+        meetingSummaryRepo.save(summary);
     }
 
     @Operation(summary = "회의 삭제")

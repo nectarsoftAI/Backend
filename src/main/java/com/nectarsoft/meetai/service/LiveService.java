@@ -25,9 +25,10 @@ public class LiveService {
 
     private final ConcurrentHashMap<UUID, SessionBuffer> buffers = new ConcurrentHashMap<>();
 
-    public Meeting createSession() {
+    public Meeting createSession(String title) {
         Meeting meeting = Meeting.builder()
                 .userId(userIdCounter.next())
+                .title(title)
                 .meetingType(MeetingType.REALTIME)
                 .status(MeetingStatus.LIVE)
                 .meetingDate(OffsetDateTime.now())
