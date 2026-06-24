@@ -2,9 +2,9 @@ package com.nectarsoft.meetai.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.websocket.WebSocketManager;
-import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.service.LiveService;
 import jakarta.websocket.*;
+import jakarta.websocket.server.PathParam;
 import jakarta.websocket.server.ServerEndpoint;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
-@ServerEndpoint("/api/v1/live/ws")
+@ServerEndpoint("/api/v1/live/ws/{meetingId}")
 public class LiveWebSocketHandler {
 
     // @ServerEndpoint는 연결마다 새 인스턴스 생성 → static으로 보관
@@ -35,28 +35,24 @@ public class LiveWebSocketHandler {
     }
 
     @OnOpen
-    public void onOpen(Session session) {
+    public void onOpen(Session session, @PathParam("meetingId") String meetingId) {
         session.setMaxBinaryMessageBufferSize(10 * 1024 * 1024);
         session.setMaxTextMessageBufferSize(64 * 1024);
 
-        // WebSocket 연결 즉시 라이브 세션 생성
-        Meeting meeting = liveService.createSession();
-        String meetingId = meeting.getMeetingId().toString();
         sessionToMeeting.put(session.getId(), meetingId);
         wsManager.register(meetingId, session);
 
-        // 클라이언트에 session_created 이벤트로 meeting_id 전달
         try {
             String json = objectMapper.writeValueAsString(Map.of(
-                    "type", "session_created",
+                    "type", "session_ready",
                     "meeting_id", meetingId
             ));
             session.getBasicRemote().sendText(json);
         } catch (Exception e) {
-            log.error("[WS] session_created 전송 실패: {}", e.getMessage());
+            log.error("[WS] session_ready 전송 실패: {}", e.getMessage());
         }
 
-        log.info("[WS] 연결 및 세션 생성 — meetingId={}", meetingId);
+        log.info("[WS] 연결 — meetingId={}", meetingId);
     }
 
     @OnMessage
