@@ -1,6 +1,7 @@
 package com.nectarsoft.meetai.dto;
 
 import com.nectarsoft.meetai.model.Meeting;
+import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.Transcript;
 import lombok.Builder;
 import lombok.Value;
@@ -20,6 +21,7 @@ public class MeetingDetailResponse {
     OffsetDateTime meetingDate;
     OffsetDateTime createdAt;
     List<TranscriptDto> transcripts;
+    SummaryDto summary;
 
     @Value
     @Builder
@@ -31,7 +33,18 @@ public class MeetingDetailResponse {
         String content;
     }
 
-    public static MeetingDetailResponse from(Meeting m, List<Transcript> transcripts) {
+    @Value
+    @Builder
+    public static class SummaryDto {
+        String keyPoints;
+        String decisions;
+        String actionItems;
+        String keywords;
+        String processingStatus;
+        OffsetDateTime processedAt;
+    }
+
+    public static MeetingDetailResponse from(Meeting m, List<Transcript> transcripts, MeetingSummary summary) {
         List<TranscriptDto> dtos = transcripts.stream()
                 .map(t -> TranscriptDto.builder()
                         .speakerLabel(t.getSpeakerLabel())
@@ -41,6 +54,16 @@ public class MeetingDetailResponse {
                         .content(t.getContent())
                         .build())
                 .toList();
+
+        SummaryDto summaryDto = summary == null ? null : SummaryDto.builder()
+                .keyPoints(summary.getKeyPoints())
+                .decisions(summary.getDecisions())
+                .actionItems(summary.getActionItems())
+                .keywords(summary.getKeywords())
+                .processingStatus(summary.getProcessingStatus().name())
+                .processedAt(summary.getProcessedAt())
+                .build();
+
         return MeetingDetailResponse.builder()
                 .meetingId(m.getMeetingId())
                 .title(m.getTitle())
@@ -50,6 +73,7 @@ public class MeetingDetailResponse {
                 .meetingDate(m.getMeetingDate())
                 .createdAt(m.getCreatedAt())
                 .transcripts(dtos)
+                .summary(summaryDto)
                 .build();
     }
 }

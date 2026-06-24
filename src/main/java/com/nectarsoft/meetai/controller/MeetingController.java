@@ -5,8 +5,10 @@ import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.MeetingListResponse;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.Transcript;
+import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.repository.AudioFileRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
+import com.nectarsoft.meetai.repository.MeetingSummaryRepository;
 import com.nectarsoft.meetai.repository.SttResultRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -29,6 +31,7 @@ public class MeetingController {
     private final TranscriptRepository transcriptRepo;
     private final SttResultRepository sttResultRepo;
     private final AudioFileRepository audioFileRepo;
+    private final MeetingSummaryRepository meetingSummaryRepo;
 
     @Operation(summary = "전체 회의록 목록 조회")
     @GetMapping
@@ -47,7 +50,8 @@ public class MeetingController {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
-        return MeetingDetailResponse.from(meeting, transcripts);
+        MeetingSummary summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId).orElse(null);
+        return MeetingDetailResponse.from(meeting, transcripts, summary);
     }
 
     @Operation(summary = "회의 삭제")
