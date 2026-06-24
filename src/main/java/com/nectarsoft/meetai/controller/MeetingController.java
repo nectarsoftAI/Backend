@@ -4,7 +4,9 @@ import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.MeetingListResponse;
 import com.nectarsoft.meetai.dto.SaveSummaryRequest;
+import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.model.Meeting;
+import com.nectarsoft.meetai.service.LlmService;
 import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.SttProcessingStatus;
 import com.nectarsoft.meetai.model.Transcript;
@@ -36,6 +38,7 @@ public class MeetingController {
     private final SttResultRepository sttResultRepo;
     private final AudioFileRepository audioFileRepo;
     private final MeetingSummaryRepository meetingSummaryRepo;
+    private final LlmService llmService;
 
     @Operation(summary = "전체 회의록 목록 조회")
     @GetMapping
@@ -60,6 +63,33 @@ public class MeetingController {
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
         MeetingSummary summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId).orElse(null);
         return MeetingDetailResponse.from(meeting, transcripts, summary);
+    }
+
+    @Operation(summary = "LLM 요약 동기 생성",
+               description = "DB 트랜스크립트로 LLM 요약을 실행하고 결과를 반환합니다. session_ended 후 프론트가 호출합니다.")
+    @PostMapping("/{meetingId}/summarize")
+    public MeetingDetailResponse.SummaryDto generateSummary(@PathVariable UUID meetingId) {
+        meetingRepo.findById(meetingId)
+                .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
+
+        List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
+        if (transcripts.isEmpty()) {
+            throw new Exceptions.SttFailedError("트랜스크립트가 없어 요약을 생성할 수 없습니다");
+        }
+
+        TranscribeResponse.SummaryDto dto = llmService.summarize(meetingId, transcripts);
+        if (dto == null) {
+            throw new Exceptions.SttFailedError("LLM 요약 생성에 실패했습니다");
+        }
+
+        return MeetingDetailResponse.SummaryDto.builder()
+                .keyPoints(dto.getKeyPoints())
+                .decisions(dto.getDecisions())
+                .actionItems(dto.getActionItems())
+                .keywords(dto.getKeywords())
+                .processingStatus(dto.getProcessingStatus())
+                .processedAt(dto.getProcessedAt())
+                .build();
     }
 
     @Operation(summary = "LLM 요약 저장 (Python LLM 서버가 호출)")
