@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Tag(name = "Meetings", description = "회의 결과 조회/삭제")
@@ -42,7 +43,11 @@ public class MeetingController {
         List<MeetingListResponse.MeetingItem> items = meetingRepo
                 .findAllByOrderByCreatedAtDesc()
                 .stream()
-                .map(MeetingListResponse.MeetingItem::from)
+                .map(m -> {
+                    List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(m.getMeetingId());
+                    Optional<MeetingSummary> summary = meetingSummaryRepo.findByMeetingMeetingId(m.getMeetingId());
+                    return MeetingListResponse.MeetingItem.from(m, transcripts, summary);
+                })
                 .toList();
         return MeetingListResponse.builder().meetings(items).build();
     }
