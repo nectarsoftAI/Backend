@@ -54,10 +54,21 @@ public class MeetingController {
         Page<Meeting> meetingPage = meetingRepo.findAll(
                 PageRequest.of(page, size, Sort.by("createdAt").descending()));
 
+        List<UUID> meetingIds = meetingPage.getContent().stream()
+                .map(Meeting::getMeetingId).toList();
+
+        Map<UUID, List<Transcript>> transcriptsByMeeting = transcriptRepo
+                .findByMeetingMeetingIdIn(meetingIds).stream()
+                .collect(Collectors.groupingBy(t -> t.getMeeting().getMeetingId()));
+
+        Map<UUID, MeetingSummary> summaryByMeeting = meetingSummaryRepo
+                .findByMeetingMeetingIdIn(meetingIds).stream()
+                .collect(Collectors.toMap(s -> s.getMeeting().getMeetingId(), s -> s));
+
         List<MeetingListResponse.MeetingItem> items = meetingPage.getContent().stream()
                 .map(m -> {
-                    List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(m.getMeetingId());
-                    Optional<MeetingSummary> summary = meetingSummaryRepo.findByMeetingMeetingId(m.getMeetingId());
+                    List<Transcript> transcripts = transcriptsByMeeting.getOrDefault(m.getMeetingId(), List.of());
+                    Optional<MeetingSummary> summary = Optional.ofNullable(summaryByMeeting.get(m.getMeetingId()));
                     return MeetingListResponse.MeetingItem.from(m, transcripts, summary);
                 })
                 .toList();
