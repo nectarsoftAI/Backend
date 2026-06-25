@@ -20,6 +20,10 @@ import java.util.stream.Collectors;
 public class MeetingListResponse {
 
     List<MeetingItem> meetings;
+    long totalCount;
+    int page;
+    int size;
+    int totalPages;
 
     @Value
     @Builder
