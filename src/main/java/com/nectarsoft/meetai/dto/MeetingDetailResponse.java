@@ -26,6 +26,7 @@ public class MeetingDetailResponse {
     @Value
     @Builder
     public static class TranscriptDto {
+        Long transcriptId;
         String speakerLabel;
         String speakerDisplay;
         double startSec;
@@ -47,6 +48,7 @@ public class MeetingDetailResponse {
     public static MeetingDetailResponse from(Meeting m, List<Transcript> transcripts, MeetingSummary summary) {
         List<TranscriptDto> dtos = transcripts.stream()
                 .map(t -> TranscriptDto.builder()
+                        .transcriptId(t.getTranscriptId())
                         .speakerLabel(t.getSpeakerLabel())
                         .speakerDisplay(t.getSpeakerDisplay())
                         .startSec(t.getStartSec())

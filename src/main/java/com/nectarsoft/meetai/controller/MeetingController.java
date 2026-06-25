@@ -5,6 +5,7 @@ import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.MeetingListResponse;
 import com.nectarsoft.meetai.dto.SaveSummaryRequest;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
+import com.nectarsoft.meetai.dto.UpdateTranscriptRequest;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.service.LlmService;
 import com.nectarsoft.meetai.model.MeetingSummary;
@@ -18,14 +19,19 @@ import com.nectarsoft.meetai.repository.TranscriptRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Tag(name = "Meetings", description = "회의 결과 조회/삭제")
 @RestController
@@ -40,19 +46,29 @@ public class MeetingController {
     private final MeetingSummaryRepository meetingSummaryRepo;
     private final LlmService llmService;
 
-    @Operation(summary = "전체 회의록 목록 조회")
+    @Operation(summary = "회의록 목록 페이지 조회")
     @GetMapping
-    public MeetingListResponse listMeetings() {
-        List<MeetingListResponse.MeetingItem> items = meetingRepo
-                .findAllByOrderByCreatedAtDesc()
-                .stream()
+    public MeetingListResponse listMeetings(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "6") int size) {
+        Page<Meeting> meetingPage = meetingRepo.findAll(
+                PageRequest.of(page, size, Sort.by("createdAt").descending()));
+
+        List<MeetingListResponse.MeetingItem> items = meetingPage.getContent().stream()
                 .map(m -> {
                     List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(m.getMeetingId());
                     Optional<MeetingSummary> summary = meetingSummaryRepo.findByMeetingMeetingId(m.getMeetingId());
                     return MeetingListResponse.MeetingItem.from(m, transcripts, summary);
                 })
                 .toList();
-        return MeetingListResponse.builder().meetings(items).build();
+
+        return MeetingListResponse.builder()
+                .meetings(items)
+                .totalCount(meetingPage.getTotalElements())
+                .page(meetingPage.getNumber())
+                .size(meetingPage.getSize())
+                .totalPages(meetingPage.getTotalPages())
+                .build();
     }
 
     @Operation(summary = "회의 결과 상세 조회 (대화록 포함)")
@@ -111,6 +127,28 @@ public class MeetingController {
         summary.setRawResponse(req.getRawResponse());
         summary.setProcessedAt(OffsetDateTime.now());
         meetingSummaryRepo.save(summary);
+    }
+
+    @Operation(summary = "대화 내용 수정", description = "변경된 트랜스크립트 목록을 전달하면 content/speakerDisplay를 업데이트합니다.")
+    @PutMapping("/{meetingId}/transcripts")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void updateTranscripts(@PathVariable UUID meetingId,
+                                   @RequestBody List<UpdateTranscriptRequest> updates) {
+        meetingRepo.findById(meetingId)
+                .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
+
+        List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
+        Map<Long, Transcript> byId = transcripts.stream()
+                .collect(Collectors.toMap(Transcript::getTranscriptId, t -> t));
+
+        for (UpdateTranscriptRequest req : updates) {
+            Transcript t = byId.get(req.getTranscriptId());
+            if (t == null) continue;
+            if (req.getContent() != null) t.setContent(req.getContent());
+            if (req.getSpeakerDisplay() != null) t.setSpeakerDisplay(req.getSpeakerDisplay());
+        }
+        transcriptRepo.saveAll(byId.values());
     }
 
     @Operation(summary = "회의 삭제")
