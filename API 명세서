@@ -1,0 +1,449 @@
+# MeetAI API 인터페이스 명세서
+
+> **㈜넥타르소프트** | v3.0 | 2026-06-22
+
+---
+
+## 서버 정보
+
+| 항목 | 내용 |
+|------|------|
+| 서버 | [https://backend-production-894a3.up.railway.app](https://backend-production-894a3.up.railway.app) |
+| API 문서 | [Swagger UI](https://backend-production-894a3.up.railway.app/swagger-ui/index.html) |
+| API 스펙 | [OpenAPI JSON](https://backend-production-894a3.up.railway.app/v3/api-docs) |
+
+---
+
+## 개정 이력
+
+| 버전 | 변경 내용 | 일자 |
+|------|-----------|------|
+| v1.0 | 인터페이스 초안 작성 | 2026-06-08 |
+| v1.1 | LLM 인터페이스 규격 내용 추가 | 2026-06-08 |
+| v2.0 | 회의록 조회, 라이브 세션 내용 추가 | 2026-06-15 |
+| v3.0 | 회의록 내용 수정 | 2026-06-22 |
+
+---
+
+## 목차
+
+1. [공통 스키마](#1-공통-스키마)
+2. [STT — 파일 업로드 및 변환](#2-stt--파일-업로드-및-변환)
+3. [Meetings — 회의록 목록 조회](#3-meetings--회의록-목록-조회)
+4. [Meetings — 회의록 상세 조회](#4-meetings--회의록-상세-조회)
+5. [Meetings — 회의록 삭제](#5-meetings--회의록-삭제)
+6. [Meetings — 트랜스크립트 수정](#6-meetings--트랜스크립트-수정)
+7. [Meetings — LLM 요약 동기 생성](#7-meetings--llm-요약-동기-생성)
+8. [Meetings — LLM 요약 저장 (내부)](#8-meetings--llm-요약-저장-내부)
+9. [Live — 라이브 세션 생성](#9-live--라이브-세션-생성)
+10. [Live — 라이브 세션 종료](#10-live--라이브-세션-종료)
+11. [Live — WebSocket 오디오 스트리밍](#11-live--websocket-오디오-스트리밍)
+
+---
+
+## 1. 공통 스키마
+
+### TranscriptDto
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `speakerLabel` | `string` | 자동 부여된 화자 ID (예: `SPEAKER_00`) |
+| `speakerDisplay` | `string` | 사용자가 지정한 화자 표시명 |
+| `startSec` | `double` | 발화 시작 시간 (초) |
+| `endSec` | `double` | 발화 종료 시간 (초) |
+| `content` | `string` | 발화 내용 |
+| `confidence` | `double` | STT 신뢰도 (0.0 ~ 1.0) |
+| `lowConfidence` | `boolean` | 낮은 신뢰도 여부 |
+
+### SummaryDto
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `keyPoints` | `string` | 핵심 논의 내용 |
+| `decisions` | `string` | 결정 사항 |
+| `actionItems` | `string` | 후속 조치 (담당자·내용·기한) |
+| `keywords` | `string` | 핵심 키워드 |
+| `processingStatus` | `string` | LLM 처리 상태 |
+| `processedAt` | `datetime` | 처리 완료 시각 |
+
+### ParticipantDto
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `speakerLabel` | `string` | 자동 부여된 화자 ID |
+| `speakerDisplay` | `string` | 사용자 지정 화자 표시명 |
+
+---
+
+## 2. STT — 파일 업로드 및 변환
+
+**태그:** `STT`  
+**설명:** 오디오 파일을 업로드하면 STT 변환 및 LLM 요약을 수행하고 결과를 반환합니다.
+
+### 요청
+
+```
+POST /api/v1/stt/transcribe
+Content-Type: multipart/form-data
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `title` | query | 선택 | `string` | 회의 제목 |
+| `file` | body | **필수** | `binary` | 업로드할 오디오 파일 |
+
+### 응답 `200 OK`
+
+```json
+{
+  "meetingId": "a1b2c3d4-0000-0000-0000-000000000000",
+  "engineUsed": "whisper",
+  "segmentCount": 12,
+  "transcripts": [
+    {
+      "speakerLabel": "SPEAKER_00",
+      "speakerDisplay": "홍길동",
+      "startSec": 0.5,
+      "endSec": 4.2,
+      "content": "안녕하세요, 오늘 회의를 시작하겠습니다.",
+      "confidence": 0.95,
+      "lowConfidence": false
+    }
+  ],
+  "summary": {
+    "keyPoints": "...",
+    "decisions": "...",
+    "actionItems": "...",
+    "keywords": "...",
+    "processingStatus": "COMPLETED",
+    "processedAt": "2026-06-22T10:00:00Z"
+  }
+}
+```
+
+---
+
+## 3. Meetings — 회의록 목록 조회
+
+**태그:** `Meetings`  
+**설명:** 페이지네이션이 적용된 회의록 목록을 반환합니다.
+
+### 요청
+
+```
+GET /api/v1/meetings?page={page}&size={size}
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 기본값 | 설명 |
+|----------|------|------|------|--------|------|
+| `page` | query | 선택 | `integer` | `0` | 페이지 번호 (0부터 시작) |
+| `size` | query | 선택 | `integer` | `6` | 페이지당 항목 수 |
+
+### 응답 `200 OK`
+
+```json
+{
+  "meetings": [
+    {
+      "meetingId": "a1b2c3d4-0000-0000-0000-000000000000",
+      "title": "주간 팀 회의",
+      "meetingType": "weekly",
+      "status": "COMPLETED",
+      "durationSeconds": 3600,
+      "meetingDate": "2026-06-22T09:00:00Z",
+      "createdAt": "2026-06-22T09:05:00Z",
+      "participants": [
+        { "speakerLabel": "SPEAKER_00", "speakerDisplay": "홍길동" },
+        { "speakerLabel": "SPEAKER_01", "speakerDisplay": "김철수" }
+      ],
+      "keywords": ["일정", "배포", "QA"]
+    }
+  ],
+  "totalCount": 42,
+  "page": 0,
+  "size": 6,
+  "totalPages": 7
+}
+```
+
+---
+
+## 4. Meetings — 회의록 상세 조회
+
+**태그:** `Meetings`  
+**설명:** 특정 회의의 전체 트랜스크립트와 LLM 요약을 반환합니다.
+
+### 요청
+
+```
+GET /api/v1/meetings/{meetingId}
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `meetingId` | path | **필수** | `uuid` | 조회할 회의 ID |
+
+### 응답 `200 OK`
+
+```json
+{
+  "meetingId": "a1b2c3d4-0000-0000-0000-000000000000",
+  "title": "주간 팀 회의",
+  "meetingType": "weekly",
+  "status": "COMPLETED",
+  "durationSeconds": 3600,
+  "meetingDate": "2026-06-22T09:00:00Z",
+  "createdAt": "2026-06-22T09:05:00Z",
+  "transcripts": [
+    {
+      "speakerLabel": "SPEAKER_00",
+      "speakerDisplay": "홍길동",
+      "startSec": 0.5,
+      "endSec": 4.2,
+      "content": "안녕하세요, 오늘 회의를 시작하겠습니다.",
+      "confidence": 0.95,
+      "lowConfidence": false
+    }
+  ],
+  "summary": {
+    "keyPoints": "...",
+    "decisions": "...",
+    "actionItems": "...",
+    "keywords": "...",
+    "processingStatus": "COMPLETED",
+    "processedAt": "2026-06-22T10:00:00Z"
+  }
+}
+```
+
+---
+
+## 5. Meetings — 회의록 삭제
+
+**태그:** `Meetings`  
+**설명:** 지정한 회의를 삭제합니다. (하드 딜리트)
+
+### 요청
+
+```
+DELETE /api/v1/meetings/{meetingId}
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `meetingId` | path | **필수** | `uuid` | 삭제할 회의 ID |
+
+### 응답
+
+| 코드 | 설명 |
+|------|------|
+| `204 No Content` | 삭제 성공 (응답 바디 없음) |
+
+---
+
+## 6. Meetings — 트랜스크립트 수정
+
+**태그:** `Meetings`  
+**설명:** 변경된 트랜스크립트 목록을 전달하면 `content` / `speakerDisplay`를 업데이트합니다.
+
+### 요청
+
+```
+PUT /api/v1/meetings/{meetingId}/transcripts
+Content-Type: application/json
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `meetingId` | path | **필수** | `uuid` | 수정할 회의 ID |
+
+**Request Body** (배열)
+
+```json
+[
+  {
+    "transcriptId": 1,
+    "speakerDisplay": "홍길동",
+    "content": "수정된 발화 내용입니다."
+  }
+]
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `transcriptId` | `long` | 수정할 트랜스크립트 세그먼트 ID |
+| `speakerDisplay` | `string` | 변경할 화자 표시명 |
+| `content` | `string` | 수정된 발화 텍스트 |
+
+### 응답
+
+| 코드 | 설명 |
+|------|------|
+| `204 No Content` | 수정 성공 (응답 바디 없음) |
+
+---
+
+## 7. Meetings — LLM 요약 동기 생성
+
+**태그:** `Meetings`  
+**설명:** DB에 저장된 트랜스크립트를 기반으로 LLM 요약을 실행하고 결과를 반환합니다. 라이브 세션의 `session_ended` 이후 프론트엔드가 호출합니다.
+
+### 요청
+
+```
+POST /api/v1/meetings/{meetingId}/summarize
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `meetingId` | path | **필수** | `uuid` | 요약할 회의 ID |
+
+### 응답 `200 OK`
+
+```json
+{
+  "keyPoints": "핵심 논의 내용",
+  "decisions": "결정 사항",
+  "actionItems": "후속 조치",
+  "keywords": "키워드1, 키워드2",
+  "processingStatus": "COMPLETED",
+  "processedAt": "2026-06-22T10:00:00Z"
+}
+```
+
+---
+
+## 8. Meetings — LLM 요약 저장 (내부)
+
+**태그:** `Meetings`  
+**설명:** Python LLM 서버가 요약 완료 후 Java 백엔드로 결과를 전달할 때 호출하는 내부 API입니다. 프론트엔드에서 직접 호출하지 않습니다.
+
+### 요청
+
+```
+POST /api/v1/meetings/{meetingId}/summary
+Content-Type: application/json
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `meetingId` | path | **필수** | `uuid` | 저장할 회의 ID |
+
+**Request Body**
+
+```json
+{
+  "keyPoints": "핵심 논의 내용",
+  "decisions": "결정 사항",
+  "actionItems": "후속 조치",
+  "keywords": "키워드1, 키워드2",
+  "rawResponse": "{ ... LLM 원본 응답 JSON ... }"
+}
+```
+
+### 응답
+
+| 코드 | 설명 |
+|------|------|
+| `201 Created` | 저장 성공 (응답 바디 없음) |
+
+---
+
+## 9. Live — 라이브 세션 생성
+
+**태그:** `Live`  
+**설명:** 프론트에서 전달한 `title`로 세션을 생성하고 `meetingId`를 반환합니다.
+
+### 요청
+
+```
+POST /api/v1/live/sessions
+Content-Type: application/json
+```
+
+**Request Body**
+
+```json
+{
+  "title": "2026-06-22 팀 스탠드업"
+}
+```
+
+### 응답 `201 Created`
+
+```json
+{
+  "meetingId": "a1b2c3d4-0000-0000-0000-000000000000"
+}
+```
+
+---
+
+## 10. Live — 라이브 세션 종료
+
+**태그:** `Live`  
+**설명:** REST 방식으로 세션을 종료합니다. WebSocket으로 `{"type":"end"}` 메시지를 보내는 방식을 권장합니다.
+
+### 요청
+
+```
+POST /api/v1/live/sessions/{sessionId}/end
+```
+
+| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+|----------|------|------|------|------|
+| `sessionId` | path | **필수** | `string` | 종료할 세션 ID |
+
+### 응답
+
+| 코드 | 설명 |
+|------|------|
+| `200 OK` | 종료 성공 |
+
+---
+
+## 11. Live — WebSocket 오디오 스트리밍
+
+**태그:** `Live`  
+**통신 방식:** WebSocket (Binary + Text)
+
+### 연결
+
+```
+ws://backend-production-894a3.up.railway.app/api/v1/live/ws
+```
+
+### 메시지 흐름
+
+#### 1) 세션 생성 확인 (서버 → 클라이언트)
+
+```json
+{
+  "type": "session_created",
+  "meeting_id": "a1b2c3d4-0000-0000-0000-000000000000"
+}
+```
+
+#### 2) 오디오 청크 전송 (클라이언트 → 서버)
+
+```javascript
+// PCM/WAV 바이너리 데이터를 Binary Frame으로 전송
+session.send(audioBlob)
+```
+
+> 서버는 청크를 누적하여 `shouldProcess()` 조건 충족 시 STT 처리 (`LiveBufferProcessor`)
+
+#### 3) 세션 종료 (클라이언트 → 서버)
+
+```json
+{ "type": "end" }
+```
+
+#### 4) 연결 종료 (자동)
+
+네트워크 끊김 또는 브라우저 탭 종료 시 자동 실행 — `sessionToMeeting` 맵에서 해당 세션 제거
+
+---
+* 작성자: 정용진 | 관련 문의: mark03023223@gmail.com 
+* 검토자: 배율희 | PM
+*최종 수정: 2026-06-22 | ㈜넥타르소프트*
