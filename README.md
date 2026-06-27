@@ -29,8 +29,8 @@ meetai.openai.api-key: sk-...
 ./gradlew bootRun
 ```
 
-서버: `http://localhost:8000`  
-API 문서: `http://localhost:8000/swagger-ui/index.html`
+서버: `https://backend-production-894a3.up.railway.app/`  
+API 문서: `https://backend-production-894a3.up.railway.app/swagger-ui/index.html`
 
 ## API
 
