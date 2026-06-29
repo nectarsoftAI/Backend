@@ -170,6 +170,7 @@ public class MeetingController {
         if (!meetingRepo.existsById(meetingId)) {
             throw new Exceptions.MeetingNotFoundError(meetingId.toString());
         }
+        meetingSummaryRepo.deleteByMeetingMeetingId(meetingId);
         transcriptRepo.deleteByMeetingMeetingId(meetingId);
         sttResultRepo.deleteByMeetingMeetingId(meetingId);
         audioFileRepo.deleteByMeetingMeetingId(meetingId);
