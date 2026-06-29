@@ -16,4 +16,6 @@ public interface MeetingSummaryRepository extends JpaRepository<MeetingSummary, 
 
     @Query("SELECT s FROM MeetingSummary s JOIN FETCH s.meeting WHERE s.meeting.meetingId IN :meetingIds")
     List<MeetingSummary> findByMeetingMeetingIdIn(@Param("meetingIds") Collection<UUID> meetingIds);
+
+    void deleteByMeetingMeetingId(UUID meetingId);
 }
