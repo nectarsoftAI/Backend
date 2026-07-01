@@ -22,9 +22,9 @@ public class OnlineMeetingService {
     private final MeetingParticipantRepository participantRepo;
 
     @Transactional
-    public Meeting createMeeting(String title, UUID hostUserId) {
+    public Meeting createMeeting(String title, UUID profileId) {
         Meeting meeting = Meeting.builder()
-                .userId(hostUserId)
+                .userId(profileId)
                 .title(title)
                 .meetingType(MeetingType.DISCORD)
                 .status(MeetingStatus.PROCESSING)
@@ -32,29 +32,28 @@ public class OnlineMeetingService {
                 .build();
         meetingRepo.save(meeting);
 
-        // 방장 자동 등록 — 모든 권한 부여
-        MeetingParticipant host = MeetingParticipant.builder()
+        MeetingParticipant admin = MeetingParticipant.builder()
                 .meeting(meeting)
-                .userId(hostUserId)
-                .role(ParticipantRole.HOST)
+                .profileId(profileId)
+                .role(ParticipantRole.ADMIN)
                 .canInvite(true)
                 .canEdit(true)
                 .canDelete(true)
-                .canStartEnd(true)
+                .canRunMeeting(true)
                 .build();
-        participantRepo.save(host);
+        participantRepo.save(admin);
 
-        log.info("[온라인회의] 생성 — meetingId={}, hostId={}", meeting.getMeetingId(), hostUserId);
+        log.info("[온라인회의] 생성 — meetingId={}, adminId={}", meeting.getMeetingId(), profileId);
         return meeting;
     }
 
     @Transactional
-    public String generateInviteToken(UUID meetingId, UUID requesterId) {
+    public String generateInviteToken(UUID meetingId, UUID profileId) {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
 
         MeetingParticipant requester = participantRepo
-                .findByMeetingMeetingIdAndUserId(meetingId, requesterId)
+                .findByMeetingMeetingIdAndProfileId(meetingId, profileId)
                 .orElseThrow(() -> new Exceptions.AccessDeniedError("참여자가 아닙니다."));
 
         if (!requester.isCanInvite()) {
@@ -70,7 +69,7 @@ public class OnlineMeetingService {
     }
 
     @Transactional
-    public MeetingParticipant joinWithToken(UUID meetingId, String token, UUID userId) {
+    public MeetingParticipant joinWithToken(UUID meetingId, String token, UUID profileId) {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
 
@@ -82,19 +81,18 @@ public class OnlineMeetingService {
             throw new Exceptions.AccessDeniedError("참여 가능한 상태가 아닙니다.");
         }
 
-        // 이미 참여 중이면 기존 정보 반환
-        return participantRepo.findByMeetingMeetingIdAndUserId(meetingId, userId)
+        return participantRepo.findByMeetingMeetingIdAndProfileId(meetingId, profileId)
                 .orElseGet(() -> {
                     MeetingParticipant guest = MeetingParticipant.builder()
                             .meeting(meeting)
-                            .userId(userId)
+                            .profileId(profileId)
                             .role(ParticipantRole.GUEST)
                             .canInvite(false)
                             .canEdit(false)
                             .canDelete(false)
-                            .canStartEnd(false)
+                            .canRunMeeting(false)
                             .build();
-                    log.info("[온라인회의] 참여자 입장 — meetingId={}, userId={}", meetingId, userId);
+                    log.info("[온라인회의] 참여자 입장 — meetingId={}, profileId={}", meetingId, profileId);
                     return participantRepo.save(guest);
                 });
     }
@@ -104,47 +102,46 @@ public class OnlineMeetingService {
     }
 
     @Transactional
-    public MeetingParticipant updateRole(UUID meetingId, UUID targetUserId, UUID requesterId,
+    public MeetingParticipant updateRole(UUID meetingId, UUID targetProfileId, UUID requesterId,
                                          ParticipantRole newRole, boolean canInvite,
-                                         boolean canEdit, boolean canDelete, boolean canStartEnd) {
-        participantRepo.findByMeetingMeetingIdAndUserId(meetingId, requesterId)
-                .filter(p -> p.getRole() == ParticipantRole.HOST)
-                .orElseThrow(() -> new Exceptions.AccessDeniedError("방장만 권한을 변경할 수 있습니다."));
+                                         boolean canEdit, boolean canDelete, boolean canRunMeeting) {
+        participantRepo.findByMeetingMeetingIdAndProfileId(meetingId, requesterId)
+                .filter(p -> p.getRole() == ParticipantRole.ADMIN)
+                .orElseThrow(() -> new Exceptions.AccessDeniedError("관리자만 권한을 변경할 수 있습니다."));
 
         MeetingParticipant target = participantRepo
-                .findByMeetingMeetingIdAndUserId(meetingId, targetUserId)
+                .findByMeetingMeetingIdAndProfileId(meetingId, targetProfileId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError("참여자를 찾을 수 없습니다."));
 
         target.setRole(newRole);
         target.setCanInvite(canInvite);
         target.setCanEdit(canEdit);
         target.setCanDelete(canDelete);
-        target.setCanStartEnd(canStartEnd);
+        target.setCanRunMeeting(canRunMeeting);
         return participantRepo.save(target);
     }
 
     @Transactional
-    public void removeParticipant(UUID meetingId, UUID targetUserId, UUID requesterId) {
+    public void removeParticipant(UUID meetingId, UUID targetProfileId, UUID requesterId) {
         MeetingParticipant requester = participantRepo
-                .findByMeetingMeetingIdAndUserId(meetingId, requesterId)
+                .findByMeetingMeetingIdAndProfileId(meetingId, requesterId)
                 .orElseThrow(() -> new Exceptions.AccessDeniedError("참여자가 아닙니다."));
 
-        // 방장이거나 본인만 퇴장 가능
-        if (requester.getRole() != ParticipantRole.HOST && !requesterId.equals(targetUserId)) {
+        if (requester.getRole() != ParticipantRole.ADMIN && !requesterId.equals(targetProfileId)) {
             throw new Exceptions.AccessDeniedError("권한이 없습니다.");
         }
 
-        participantRepo.findByMeetingMeetingIdAndUserId(meetingId, targetUserId)
+        participantRepo.findByMeetingMeetingIdAndProfileId(meetingId, targetProfileId)
                 .ifPresent(participantRepo::delete);
     }
 
     @Transactional
-    public void startMeeting(UUID meetingId, UUID requesterId) {
+    public void startMeeting(UUID meetingId, UUID profileId) {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
 
-        participantRepo.findByMeetingMeetingIdAndUserId(meetingId, requesterId)
-                .filter(MeetingParticipant::isCanStartEnd)
+        participantRepo.findByMeetingMeetingIdAndProfileId(meetingId, profileId)
+                .filter(MeetingParticipant::isCanRunMeeting)
                 .orElseThrow(() -> new Exceptions.AccessDeniedError("회의 시작 권한이 없습니다."));
 
         meeting.setStatus(MeetingStatus.LIVE);
@@ -153,12 +150,12 @@ public class OnlineMeetingService {
     }
 
     @Transactional
-    public void endMeeting(UUID meetingId, UUID requesterId) {
+    public void endMeeting(UUID meetingId, UUID profileId) {
         Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
 
-        participantRepo.findByMeetingMeetingIdAndUserId(meetingId, requesterId)
-                .filter(MeetingParticipant::isCanStartEnd)
+        participantRepo.findByMeetingMeetingIdAndProfileId(meetingId, profileId)
+                .filter(MeetingParticipant::isCanRunMeeting)
                 .orElseThrow(() -> new Exceptions.AccessDeniedError("회의 종료 권한이 없습니다."));
 
         meeting.setStatus(MeetingStatus.COMPLETED);

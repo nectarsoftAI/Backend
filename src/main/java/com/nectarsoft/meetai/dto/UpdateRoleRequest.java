@@ -9,5 +9,5 @@ public class UpdateRoleRequest {
     private boolean canInvite;
     private boolean canEdit;
     private boolean canDelete;
-    private boolean canStartEnd;
+    private boolean canRunMeeting;
 }

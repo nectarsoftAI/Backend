@@ -12,23 +12,23 @@ import java.util.UUID;
 @Builder
 public class ParticipantResponse {
     private Long participantId;
-    private UUID userId;
+    private UUID profileId;
     private ParticipantRole role;
     private boolean canInvite;
     private boolean canEdit;
     private boolean canDelete;
-    private boolean canStartEnd;
+    private boolean canRunMeeting;
     private OffsetDateTime joinedAt;
 
     public static ParticipantResponse from(MeetingParticipant p) {
         return ParticipantResponse.builder()
                 .participantId(p.getParticipantId())
-                .userId(p.getUserId())
+                .profileId(p.getProfileId())
                 .role(p.getRole())
                 .canInvite(p.isCanInvite())
                 .canEdit(p.isCanEdit())
                 .canDelete(p.isCanDelete())
-                .canStartEnd(p.isCanStartEnd())
+                .canRunMeeting(p.isCanRunMeeting())
                 .joinedAt(p.getJoinedAt())
                 .build();
     }

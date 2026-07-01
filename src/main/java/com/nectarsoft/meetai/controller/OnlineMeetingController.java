@@ -24,8 +24,8 @@ public class OnlineMeetingController {
     @PostMapping
     public ResponseEntity<Map<String, String>> createMeeting(
             @RequestBody CreateMeetingRequest req,
-            @RequestHeader("X-User-Id") UUID userId) {
-        Meeting meeting = onlineMeetingService.createMeeting(req.getTitle(), userId);
+            @RequestHeader("X-User-Id") UUID profileId) {
+        Meeting meeting = onlineMeetingService.createMeeting(req.getTitle(), profileId);
         return ResponseEntity.ok(Map.of("meetingId", meeting.getMeetingId().toString()));
     }
 
@@ -33,8 +33,8 @@ public class OnlineMeetingController {
     @PostMapping("/{meetingId}/invite")
     public ResponseEntity<InviteResponse> generateInviteToken(
             @PathVariable UUID meetingId,
-            @RequestHeader("X-User-Id") UUID userId) {
-        String token = onlineMeetingService.generateInviteToken(meetingId, userId);
+            @RequestHeader("X-User-Id") UUID profileId) {
+        String token = onlineMeetingService.generateInviteToken(meetingId, profileId);
         return ResponseEntity.ok(new InviteResponse(meetingId.toString(), token));
     }
 
@@ -43,8 +43,8 @@ public class OnlineMeetingController {
     public ResponseEntity<ParticipantResponse> joinWithToken(
             @PathVariable UUID meetingId,
             @RequestParam String token,
-            @RequestHeader("X-User-Id") UUID userId) {
-        MeetingParticipant participant = onlineMeetingService.joinWithToken(meetingId, token, userId);
+            @RequestHeader("X-User-Id") UUID profileId) {
+        MeetingParticipant participant = onlineMeetingService.joinWithToken(meetingId, token, profileId);
         return ResponseEntity.ok(ParticipantResponse.from(participant));
     }
 
@@ -57,25 +57,25 @@ public class OnlineMeetingController {
     }
 
     // 참여자 역할/권한 변경
-    @PatchMapping("/{meetingId}/participants/{targetUserId}/role")
+    @PatchMapping("/{meetingId}/participants/{targetProfileId}/role")
     public ResponseEntity<ParticipantResponse> updateRole(
             @PathVariable UUID meetingId,
-            @PathVariable UUID targetUserId,
+            @PathVariable UUID targetProfileId,
             @RequestHeader("X-User-Id") UUID requesterId,
             @RequestBody UpdateRoleRequest req) {
         MeetingParticipant updated = onlineMeetingService.updateRole(
-                meetingId, targetUserId, requesterId,
-                req.getRole(), req.isCanInvite(), req.isCanEdit(), req.isCanDelete(), req.isCanStartEnd());
+                meetingId, targetProfileId, requesterId,
+                req.getRole(), req.isCanInvite(), req.isCanEdit(), req.isCanDelete(), req.isCanRunMeeting());
         return ResponseEntity.ok(ParticipantResponse.from(updated));
     }
 
     // 참여자 퇴장/강퇴
-    @DeleteMapping("/{meetingId}/participants/{targetUserId}")
+    @DeleteMapping("/{meetingId}/participants/{targetProfileId}")
     public ResponseEntity<Void> removeParticipant(
             @PathVariable UUID meetingId,
-            @PathVariable UUID targetUserId,
+            @PathVariable UUID targetProfileId,
             @RequestHeader("X-User-Id") UUID requesterId) {
-        onlineMeetingService.removeParticipant(meetingId, targetUserId, requesterId);
+        onlineMeetingService.removeParticipant(meetingId, targetProfileId, requesterId);
         return ResponseEntity.noContent().build();
     }
 
@@ -83,8 +83,8 @@ public class OnlineMeetingController {
     @PostMapping("/{meetingId}/start")
     public ResponseEntity<Void> startMeeting(
             @PathVariable UUID meetingId,
-            @RequestHeader("X-User-Id") UUID userId) {
-        onlineMeetingService.startMeeting(meetingId, userId);
+            @RequestHeader("X-User-Id") UUID profileId) {
+        onlineMeetingService.startMeeting(meetingId, profileId);
         return ResponseEntity.ok().build();
     }
 
@@ -92,8 +92,8 @@ public class OnlineMeetingController {
     @PostMapping("/{meetingId}/end")
     public ResponseEntity<Void> endMeeting(
             @PathVariable UUID meetingId,
-            @RequestHeader("X-User-Id") UUID userId) {
-        onlineMeetingService.endMeeting(meetingId, userId);
+            @RequestHeader("X-User-Id") UUID profileId) {
+        onlineMeetingService.endMeeting(meetingId, profileId);
         return ResponseEntity.ok().build();
     }
 }

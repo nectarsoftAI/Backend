@@ -9,7 +9,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "meeting_participants",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"meeting_id", "user_id"}))
+        uniqueConstraints = @UniqueConstraint(columnNames = {"meeting_id", "profile_id"}))
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class MeetingParticipant {
 
@@ -22,8 +22,8 @@ public class MeetingParticipant {
     @JoinColumn(name = "meeting_id", nullable = false)
     private Meeting meeting;
 
-    @Column(name = "user_id", nullable = false, columnDefinition = "uuid")
-    private UUID userId;
+    @Column(name = "profile_id", nullable = false, columnDefinition = "uuid")
+    private UUID profileId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -42,9 +42,9 @@ public class MeetingParticipant {
     @Builder.Default
     private boolean canDelete = false;
 
-    @Column(name = "can_start_end", nullable = false)
+    @Column(name = "can_run_meeting", nullable = false)
     @Builder.Default
-    private boolean canStartEnd = false;
+    private boolean canRunMeeting = false;
 
     @CreationTimestamp
     @Column(name = "joined_at", updatable = false, columnDefinition = "timestamptz")
