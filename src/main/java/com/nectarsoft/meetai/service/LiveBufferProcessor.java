@@ -94,13 +94,11 @@ public class LiveBufferProcessor {
             if (isFinal) {
                 int savedCount = 0;
                 if (meeting != null) {
-                    List<Transcript> allTranscripts = transcriptRepo
-                            .findByMeetingMeetingIdOrderByStartSecAsc(UUID.fromString(sessionId));
-                    savedCount = allTranscripts.size();
-                    if (!allTranscripts.isEmpty()) {
-                        llmService.summarizeAsync(meeting.getMeetingId(), allTranscripts);
-                    }
+                    savedCount = transcriptRepo
+                            .findByMeetingMeetingIdOrderByStartSecAsc(UUID.fromString(sessionId))
+                            .size();
                 }
+                // 요약은 프론트가 POST /summarize 를 직접 호출하므로 여기서 중복 트리거하지 않음
                 wsManager.broadcast(sessionId, objectMapper.writeValueAsString(
                         Map.of("type", "session_ended", "transcript_count", savedCount)));
                 wsManager.closeAll(sessionId);
