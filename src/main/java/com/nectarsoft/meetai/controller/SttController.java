@@ -47,7 +47,7 @@ public class SttController {
     public TranscribeResponse transcribe(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "title", required = false) String title,
-            @RequestHeader(value = "X-User-Id", required = false) UUID profileId) throws IOException {
+            @RequestHeader("X-User-Id") UUID profileId) throws IOException {
         Path saved = audioService.saveUpload(file);
         AudioContext ctx = audioService.preprocess(saved);
 

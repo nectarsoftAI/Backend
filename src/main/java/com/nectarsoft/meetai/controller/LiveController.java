@@ -31,7 +31,7 @@ public class LiveController {
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, String> createSession(
             @RequestBody CreateSessionRequest req,
-            @RequestHeader(value = "X-User-Id", required = false) UUID profileId) {
+            @RequestHeader("X-User-Id") UUID profileId) {
         Meeting meeting = liveService.createSession(req.getTitle(), profileId);
         return Map.of("meetingId", meeting.getMeetingId().toString());
     }
