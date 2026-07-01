@@ -2,6 +2,8 @@ package com.nectarsoft.meetai.repository;
 
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -15,6 +17,8 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
     List<Meeting> findAllByOrderByCreatedAtDesc();
 
     List<Meeting> findByUserIdOrderByCreatedAtDesc(UUID userId);
+
+    Page<Meeting> findByUserId(UUID userId, Pageable pageable);
 
     @Modifying
     @Query("UPDATE Meeting m SET m.status = :status WHERE m.meetingId = :id")

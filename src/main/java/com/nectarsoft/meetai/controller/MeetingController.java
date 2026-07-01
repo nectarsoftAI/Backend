@@ -49,10 +49,11 @@ public class MeetingController {
     @Operation(summary = "회의록 목록 페이지 조회")
     @GetMapping
     public MeetingListResponse listMeetings(
+            @RequestHeader("X-User-Id") UUID userId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "6") int size) {
-        Page<Meeting> meetingPage = meetingRepo.findAll(
-                PageRequest.of(page, size, Sort.by("createdAt").descending()));
+        Page<Meeting> meetingPage = meetingRepo.findByUserId(
+                userId, PageRequest.of(page, size, Sort.by("createdAt").descending()));
 
         List<UUID> meetingIds = meetingPage.getContent().stream()
                 .map(Meeting::getMeetingId).toList();
