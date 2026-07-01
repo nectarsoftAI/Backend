@@ -1,6 +1,5 @@
 package com.nectarsoft.meetai.controller;
 
-import com.nectarsoft.meetai.core.UserIdCounter;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.model.*;
 import com.nectarsoft.meetai.repository.AudioFileRepository;
@@ -36,7 +35,6 @@ public class SttController {
     private final AudioService audioService;
     private final SttService sttService;
     private final MeetingRepository meetingRepo;
-    private final UserIdCounter userIdCounter;
     private final AudioFileRepository audioFileRepo;
     private final SttResultRepository sttResultRepo;
     private final TranscriptRepository transcriptRepo;
@@ -47,13 +45,14 @@ public class SttController {
     @PostMapping(value = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public TranscribeResponse transcribe(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "title", required = false) String title) throws IOException {
+            @RequestParam(value = "title", required = false) String title,
+            @RequestHeader(value = "X-User-Id", required = false) UUID profileId) throws IOException {
         Path saved = audioService.saveUpload(file);
         AudioContext ctx = audioService.preprocess(saved);
 
         // meeting 생성
         Meeting meeting = Meeting.builder()
-                .userId(userIdCounter.next())
+                .userId(profileId)
                 .title(title != null && !title.isBlank() ? title : file.getOriginalFilename())
                 .meetingType(MeetingType.UPLOAD)
                 .status(MeetingStatus.PROCESSING)

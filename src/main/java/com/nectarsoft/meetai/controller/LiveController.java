@@ -28,8 +28,10 @@ public class LiveController {
                description = "프론트에서 전달한 title로 세션을 생성하고 meetingId를 반환합니다.")
     @PostMapping("/sessions")
     @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, String> createSession(@RequestBody CreateSessionRequest req) {
-        Meeting meeting = liveService.createSession(req.getTitle());
+    public Map<String, String> createSession(
+            @RequestBody CreateSessionRequest req,
+            @RequestHeader(value = "X-User-Id", required = false) java.util.UUID profileId) {
+        Meeting meeting = liveService.createSession(req.getTitle(), profileId);
         return Map.of("meetingId", meeting.getMeetingId().toString());
     }
 

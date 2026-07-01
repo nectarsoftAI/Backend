@@ -1,6 +1,5 @@
 package com.nectarsoft.meetai.service;
 
-import com.nectarsoft.meetai.core.UserIdCounter;
 import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingStatus;
@@ -21,13 +20,12 @@ public class LiveService {
 
     private final MeetingRepository meetingRepo;
     private final LiveBufferProcessor processor;
-    private final UserIdCounter userIdCounter;
 
     private final ConcurrentHashMap<UUID, SessionBuffer> buffers = new ConcurrentHashMap<>();
 
-    public Meeting createSession(String title) {
+    public Meeting createSession(String title, UUID profileId) {
         Meeting meeting = Meeting.builder()
-                .userId(userIdCounter.next())
+                .userId(profileId)
                 .title(title)
                 .meetingType(MeetingType.REALTIME)
                 .status(MeetingStatus.LIVE)
