@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Tag(name = "STT", description = "음성→텍스트 변환")

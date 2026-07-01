@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.UUID;
 
 @Tag(name = "Live", description = "실시간 라이브 녹음 세션")
 @RestController
@@ -30,7 +31,7 @@ public class LiveController {
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, String> createSession(
             @RequestBody CreateSessionRequest req,
-            @RequestHeader(value = "X-User-Id", required = false) java.util.UUID profileId) {
+            @RequestHeader(value = "X-User-Id", required = false) UUID profileId) {
         Meeting meeting = liveService.createSession(req.getTitle(), profileId);
         return Map.of("meetingId", meeting.getMeetingId().toString());
     }
