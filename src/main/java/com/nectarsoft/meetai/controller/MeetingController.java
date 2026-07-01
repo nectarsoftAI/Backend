@@ -60,7 +60,7 @@ public class MeetingController {
 
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
         if (transcripts.isEmpty()) {
-            throw new Exceptions.SttFailedError("트랜스크립트가 없어 요약을 생성할 수 없습니다");
+            throw new Exceptions.NoTranscriptError("음성 인식 결과가 없습니다. 녹음 내용을 확인해 주세요.");
         }
 
         TranscribeResponse.SummaryDto dto = llmService.summarize(meetingId, transcripts);

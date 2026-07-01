@@ -92,16 +92,17 @@ public class LiveBufferProcessor {
             log.info("[Live] 브로드캐스트 완료 — {} 구간", segments.size());
 
             if (isFinal) {
-                // 세션 종료 시 전체 transcript 조회 후 LLM 요약 비동기 호출
+                int savedCount = 0;
                 if (meeting != null) {
                     List<Transcript> allTranscripts = transcriptRepo
                             .findByMeetingMeetingIdOrderByStartSecAsc(UUID.fromString(sessionId));
+                    savedCount = allTranscripts.size();
                     if (!allTranscripts.isEmpty()) {
                         llmService.summarizeAsync(meeting.getMeetingId(), allTranscripts);
                     }
                 }
                 wsManager.broadcast(sessionId, objectMapper.writeValueAsString(
-                        Map.of("type", "session_ended")));
+                        Map.of("type", "session_ended", "transcript_count", savedCount)));
                 wsManager.closeAll(sessionId);
             }
 
