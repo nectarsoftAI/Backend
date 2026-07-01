@@ -71,4 +71,11 @@ public final class Exceptions {
             super("EX-012", "미팅을 찾을 수 없습니다: " + meetingId, HttpStatus.NOT_FOUND);
         }
     }
+
+    // EX-013: 권한 없음
+    public static class AccessDeniedError extends MeetAiException {
+        public AccessDeniedError(String detail) {
+            super("EX-013", detail, HttpStatus.FORBIDDEN);
+        }
+    }
 }
