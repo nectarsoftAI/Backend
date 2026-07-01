@@ -38,7 +38,7 @@ public class Meeting {
     @Column(name = "meeting_date", columnDefinition = "timestamptz")
     private OffsetDateTime meetingDate;
 
-    @Column(name = "invite_token", unique = true)
+    @Column(name = "meeting_token", unique = true)
     private String inviteToken;
 
     @CreationTimestamp
