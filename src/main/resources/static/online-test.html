@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>MeetAI 테스트</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #202124; color: #e8eaed; min-height: 100vh; }
+
+/* ── 로그인 화면 ── */
+#loginScreen {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100vh; gap: 16px;
+}
+#loginScreen h1 { font-size: 28px; color: #8ab4f8; }
+#loginScreen p  { color: #9aa0a6; font-size: 14px; }
+#loginScreen input {
+  width: 320px; padding: 12px 16px; background: #303134; border: 1px solid #5f6368;
+  color: #e8eaed; border-radius: 8px; font-size: 14px;
+}
+#loginScreen input:focus { outline: none; border-color: #8ab4f8; }
+
+/* ── 홈 화면 ── */
+#homeScreen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 32px; }
+#homeScreen h1 { font-size: 40px; font-weight: 400; text-align: center; line-height: 1.3; }
+#homeScreen .sub { color: #9aa0a6; font-size: 16px; text-align: center; }
+.home-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.home-row input {
+  padding: 14px 20px; background: #303134; border: 1px solid #5f6368;
+  color: #e8eaed; border-radius: 30px; font-size: 15px; width: 280px;
+}
+.home-row input:focus { outline: none; border-color: #8ab4f8; }
+
+/* ── 회의 화면 ── */
+#meetingScreen { display: none; flex-direction: column; height: 100vh; }
+.meeting-header {
+  padding: 12px 20px; background: #292a2d; border-bottom: 1px solid #3c4043;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.meeting-header .info { display: flex; flex-direction: column; }
+.meeting-header .title { font-size: 16px; }
+.meeting-header .meta  { font-size: 12px; color: #9aa0a6; margin-top: 2px; }
+.meeting-body { display: flex; flex: 1; overflow: hidden; }
+.transcript-area { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
+.side-panel { width: 280px; background: #292a2d; border-left: 1px solid #3c4043; display: flex; flex-direction: column; }
+.side-title { padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #3c4043; }
+.participant-list { flex: 1; overflow-y: auto; padding: 8px; }
+.participant-item { padding: 8px 10px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.participant-item:hover { background: #3c4043; }
+.avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+.role-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: #3c4043; color: #9aa0a6; margin-left: auto; }
+.role-badge.admin { background: #1a3a5c; color: #8ab4f8; }
+.log-area { height: 180px; border-top: 1px solid #3c4043; overflow-y: auto; padding: 8px; font-size: 11px; font-family: monospace; }
+.meeting-footer {
+  padding: 16px; background: #292a2d; border-top: 1px solid #3c4043;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+}
+
+/* ── 버튼 ── */
+.btn { padding: 12px 20px; border: none; border-radius: 30px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.15s; }
+.btn-primary { background: #8ab4f8; color: #202124; }
+.btn-primary:hover { background: #93bbf9; }
+.btn-outline { background: transparent; border: 1px solid #5f6368; color: #e8eaed; }
+.btn-outline:hover { background: #3c4043; }
+.btn-icon { width: 48px; height: 48px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: background 0.15s; }
+.btn-icon.gray   { background: #3c4043; }
+.btn-icon.gray:hover   { background: #4c4f52; }
+.btn-icon.active { background: #8ab4f8; }
+.btn-icon.red    { background: #ea4335; }
+.btn-icon.red:hover    { background: #f25547; }
+.btn-pill { border: none; border-radius: 24px; padding: 0 20px; height: 48px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.btn-pill.green { background: #34a853; color: #fff; }
+.btn-pill.red   { background: #ea4335; color: #fff; }
+
+/* ── 자막 ── */
+.seg { background: #292a2d; border-radius: 12px; padding: 10px 14px; max-width: 720px; }
+.seg .who  { font-size: 12px; color: #8ab4f8; margin-bottom: 4px; }
+.seg .text { font-size: 15px; line-height: 1.5; }
+.seg.me    { align-self: flex-end; background: #1a3a5c; }
+.seg.me .who { color: #93bbf9; }
+
+/* ── 상태 ── */
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.dot-live   { background: #34a853; }
+.dot-off    { background: #9aa0a6; }
+.log .tx    { color: #34a853; }
+.log .rx    { color: #8ab4f8; }
+.log .err   { color: #ea4335; }
+.log .sys   { color: #9aa0a6; }
+</style>
+</head>
+<body>
+
+<!-- ── 로그인 화면 ── -->
+<div id="loginScreen">
+  <h1>MeetAI 테스트</h1>
+  <p>테스트용 Profile ID (UUID)를 입력하면 로그인된 상태로 시작합니다.</p>
+  <input id="profileIdInput" placeholder="내 Profile ID (UUID)" onkeydown="if(event.key==='Enter')login()" />
+  <button class="btn btn-primary" onclick="login()">시작하기</button>
+</div>
+
+<!-- ── 홈 화면 ── -->
+<div id="homeScreen">
+  <div>
+    <h1>화상 회의</h1>
+    <p class="sub" style="margin-top:8px">MeetAI WebSocket 테스트</p>
+  </div>
+  <div class="home-row">
+    <button class="btn btn-primary" onclick="createMeeting()">+ 새 회의</button>
+    <input id="joinCodeInput" placeholder="초대 코드 입력" onkeydown="if(event.key==='Enter')joinWithCode()" />
+    <button class="btn btn-outline" onclick="joinWithCode()">참여</button>
+  </div>
+  <p style="font-size:12px;color:#5f6368;">
+    Profile ID: <span id="displayProfileId" style="color:#8ab4f8"></span>
+    <button onclick="logout()" style="background:none;border:none;color:#9aa0a6;cursor:pointer;font-size:12px;margin-left:8px;">변경</button>
+  </p>
+</div>
+
+<!-- ── 회의 화면 ── -->
+<div id="meetingScreen">
+  <div class="meeting-header">
+    <div class="info">
+      <div class="title" id="meetingTitle">회의</div>
+      <div class="meta">
+        <span class="status-dot dot-off" id="statusDot"></span>
+        <span id="statusText">연결 중...</span>
+        &nbsp;·&nbsp; <span id="meetingIdDisplay"></span>
+      </div>
+    </div>
+    <button class="btn btn-outline" onclick="copyInvite()" style="font-size:13px">초대 코드 복사</button>
+  </div>
+
+  <div class="meeting-body">
+    <div class="transcript-area" id="transcriptArea">
+      <div id="transcriptHint" style="text-align:center;color:#5f6368;margin-top:40px;font-size:14px">
+        회의가 시작되면 자막이 여기에 표시됩니다.
+      </div>
+    </div>
+
+    <div class="side-panel">
+      <div class="side-title">참여자 <span id="participantCount" style="color:#9aa0a6"></span></div>
+      <div class="participant-list" id="participantList"></div>
+      <div class="side-title" style="font-size:13px">이벤트 로그</div>
+      <div class="log-area" id="logArea"></div>
+    </div>
+  </div>
+
+  <div class="meeting-footer">
+    <button class="btn-icon gray" id="btnMic" onclick="toggleMic()" title="마이크">🎙</button>
+    <button class="btn-pill green" onclick="startMeeting()">▶ 회의 시작</button>
+    <button class="btn-icon red"  onclick="leaveMeeting()" title="나가기">📞</button>
+    <button class="btn-pill red"  onclick="endMeeting()">■ 회의 종료</button>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://backend-production-894a3.up.railway.app';
+
+let myProfileId  = localStorage.getItem('profileId') || '';
+let meetingId    = '';
+let inviteToken  = '';
+let ws           = null;
+let mediaRecorder = null;
+let micOn        = false;
+let participants = {};
+
+// ── 로그인 ────────────────────────────────────────────
+function login() {
+  const val = document.getElementById('profileIdInput').value.trim();
+  if (!val) return;
+  myProfileId = val;
+  localStorage.setItem('profileId', val);
+  showHome();
+}
+function logout() {
+  localStorage.removeItem('profileId');
+  myProfileId = '';
+  document.getElementById('profileIdInput').value = '';
+  show('loginScreen');
+}
+function showHome() {
+  document.getElementById('displayProfileId').textContent = myProfileId;
+  show('homeScreen');
+}
+
+// ── 화면 전환 ─────────────────────────────────────────
+function show(id) {
+  ['loginScreen','homeScreen','meetingScreen'].forEach(s => {
+    const el = document.getElementById(s);
+    el.style.display = s === id ? 'flex' : 'none';
+  });
+}
+if (myProfileId) showHome(); else show('loginScreen');
+
+// ── 회의 생성 ─────────────────────────────────────────
+async function createMeeting() {
+  try {
+    const res = await fetch(`${BASE}/api/v1/meetings/online`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': myProfileId },
+      body: JSON.stringify({ title: '새 회의' })
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    enterMeeting(data.meetingId, data.token);
+  } catch(e) { alert('회의 생성 실패: ' + e.message); }
+}
+
+// ── 코드로 참여 ───────────────────────────────────────
+function joinWithCode() {
+  const code = document.getElementById('joinCodeInput').value.trim();
+  if (!code) { alert('초대 코드를 입력하세요.'); return; }
+  if (code.includes(':')) {
+    const [mid, tok] = code.split(':');
+    enterMeeting(mid.trim(), tok.trim());
+  } else {
+    const mid = prompt('Meeting ID를 입력하세요:');
+    if (mid) enterMeeting(mid.trim(), code);
+  }
+}
+
+// ── 회의 화면 진입 ────────────────────────────────────
+function enterMeeting(mid, token) {
+  meetingId    = mid;
+  inviteToken  = token;
+  participants = {};
+  document.getElementById('meetingIdDisplay').textContent = mid.slice(0,8) + '...';
+  document.getElementById('meetingTitle').textContent = '회의';
+  document.getElementById('transcriptArea').innerHTML =
+    '<div id="transcriptHint" style="text-align:center;color:#5f6368;margin-top:40px;font-size:14px">회의가 시작되면 자막이 여기에 표시됩니다.</div>';
+  document.getElementById('logArea').innerHTML = '';
+  renderParticipants();
+  show('meetingScreen');
+  connectWs(token);
+}
+
+// ── WebSocket ─────────────────────────────────────────
+function connectWs(token) {
+  setStatus(false, '연결 중...');
+  const url = `wss://backend-production-894a3.up.railway.app/api/v1/online/ws/${meetingId}`
+            + `?token=${encodeURIComponent(token)}&profileId=${encodeURIComponent(myProfileId)}`;
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen    = () => setStatus(true, '연결됨');
+  ws.onclose   = (e) => { setStatus(false, `연결 끊김 (${e.code})`); stopMic(); };
+  ws.onerror   = () => log('WS 오류', 'err');
+  ws.onmessage = (e) => {
+    if (typeof e.data !== 'string') return;
+    try {
+      const msg = JSON.parse(e.data);
+      log('← ' + msg.type, 'rx');
+      handleMsg(msg);
+    } catch(_) {}
+  };
+}
+
+function send(obj) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+    log('→ ' + obj.type, 'tx');
+  } else {
+    log('WS 미연결', 'err');
+  }
+}
+
+function handleMsg(msg) {
+  switch(msg.type) {
+    case 'room_info':
+      if (msg.title) document.getElementById('meetingTitle').textContent = msg.title;
+      (msg.participants || []).forEach(addParticipant);
+      break;
+    case 'participant_joined':
+      addParticipant(msg);
+      break;
+    case 'participant_left':
+      removeParticipant(msg.profileId);
+      break;
+    case 'meeting_started':
+      setStatus(true, '🔴 진행 중');
+      break;
+    case 'meeting_ended':
+      setStatus(false, '종료됨');
+      stopMic();
+      break;
+    case 'kicked':
+      alert('강퇴되었습니다.');
+      leaveMeeting();
+      break;
+    case 'transcript':
+      addTranscript(msg);
+      break;
+  }
+}
+
+// ── 참여자 ────────────────────────────────────────────
+function addParticipant(p) {
+  participants[p.profileId] = p;
+  renderParticipants();
+}
+function removeParticipant(pid) {
+  delete participants[pid];
+  renderParticipants();
+}
+function renderParticipants() {
+  const list = Object.values(participants);
+  document.getElementById('participantCount').textContent = `(${list.length})`;
+  document.getElementById('participantList').innerHTML = list.map(p => {
+    const isMe  = p.profileId === myProfileId;
+    const color = strColor(p.profileId);
+    const init  = (p.displayName || p.profileId).charAt(0).toUpperCase();
+    return `<div class="participant-item">
+      <div class="avatar" style="background:${color}">${init}</div>
+      <div style="font-size:13px">${p.displayName || p.profileId.slice(0,8)}${isMe ? ' (나)' : ''}</div>
+      <span class="role-badge ${p.role === 'ADMIN' ? 'admin' : ''}">${p.role}</span>
+    </div>`;
+  }).join('');
+}
+function strColor(s) {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h},45%,36%)`;
+}
+
+// ── 자막 ─────────────────────────────────────────────
+function addTranscript(msg) {
+  const area = document.getElementById('transcriptArea');
+  const hint = document.getElementById('transcriptHint');
+  if (hint) hint.remove();
+  const isMe = msg.profileId === myProfileId;
+  const div = document.createElement('div');
+  div.className = 'seg' + (isMe ? ' me' : '');
+  div.innerHTML = `<div class="who">${msg.speakerDisplay || (msg.profileId || '').slice(0,8)}</div>
+    <div class="text">${msg.text}</div>`;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+}
+
+// ── 마이크 / STT ─────────────────────────────────────
+async function toggleMic() {
+  micOn ? stopMic() : await startMic();
+}
+async function startMic() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { alert('WS에 연결된 후 사용하세요.'); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    mediaRecorder.ondataavailable = async (e) => {
+      if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN)
+        ws.send(await e.data.arrayBuffer());
+    };
+    mediaRecorder.start(5000);
+    micOn = true;
+    document.getElementById('btnMic').className = 'btn-icon active';
+    log('마이크 ON (5초 간격 전송)', 'sys');
+  } catch(e) { log('마이크 오류: ' + e.message, 'err'); }
+}
+function stopMic() {
+  if (!micOn) return;
+  mediaRecorder?.stop();
+  mediaRecorder?.stream?.getTracks().forEach(t => t.stop());
+  mediaRecorder = null;
+  micOn = false;
+  document.getElementById('btnMic').className = 'btn-icon gray';
+  log('마이크 OFF', 'sys');
+}
+
+// ── 회의 제어 ─────────────────────────────────────────
+function startMeeting() { send({ type: 'start_meeting' }); }
+function endMeeting()   { send({ type: 'end_meeting' }); }
+function leaveMeeting() { stopMic(); ws?.close(); showHome(); }
+
+// ── 초대 코드 복사 ────────────────────────────────────
+function copyInvite() {
+  const code = `${meetingId}:${inviteToken}`;
+  navigator.clipboard.writeText(code).then(() => alert('복사됨!\n' + code));
+}
+
+// ── 상태 표시 ─────────────────────────────────────────
+function setStatus(live, text) {
+  document.getElementById('statusDot').className = 'status-dot ' + (live ? 'dot-live' : 'dot-off');
+  document.getElementById('statusText').textContent = text;
+}
+
+// ── 로그 ─────────────────────────────────────────────
+function log(msg, cls = 'sys') {
+  const el = document.getElementById('logArea');
+  if (!el) return;
+  const t = new Date().toLocaleTimeString('ko', { hour12: false });
+  el.innerHTML += `<div class="${cls} log">[${t}] ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+</script>
+</body>
+</html>
