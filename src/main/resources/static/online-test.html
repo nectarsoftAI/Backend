@@ -2,379 +2,392 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>온라인 회의 테스트</title>
+<title>MeetAI 테스트</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 16px; }
-  h1 { color: #7eb8f7; margin-bottom: 16px; font-size: 18px; }
-  h2 { color: #aaa; font-size: 13px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .card { background: #252525; border: 1px solid #333; border-radius: 8px; padding: 16px; }
-  .card.full { grid-column: 1 / -1; }
-  input, select { width: 100%; padding: 6px 8px; background: #333; border: 1px solid #555; color: #e0e0e0;
-    border-radius: 4px; font-family: monospace; font-size: 12px; margin-bottom: 6px; }
-  button { padding: 7px 14px; border: none; border-radius: 4px; cursor: pointer;
-    font-family: monospace; font-size: 12px; margin: 2px; }
-  .btn-blue   { background: #2563eb; color: #fff; }
-  .btn-green  { background: #16a34a; color: #fff; }
-  .btn-red    { background: #dc2626; color: #fff; }
-  .btn-gray   { background: #444; color: #ccc; }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .log { background: #111; border: 1px solid #333; border-radius: 4px; height: 220px;
-    overflow-y: auto; padding: 8px; font-size: 11px; line-height: 1.6; }
-  .log .tx  { color: #6ee7b7; }
-  .log .rx  { color: #93c5fd; }
-  .log .err { color: #f87171; }
-  .log .sys { color: #a78bfa; }
-  .log .stt { color: #fbbf24; background: #2a2000; padding: 1px 4px; border-radius: 2px; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 6px; }
-  .badge.on  { background: #16a34a; color: #fff; }
-  .badge.off { background: #555; color: #ccc; }
-  .status-row { display: flex; align-items: center; margin-bottom: 10px; font-size: 13px; }
-  .field-label { font-size: 11px; color: #888; margin-bottom: 2px; }
-  .copyable { background: #333; padding: 4px 8px; border-radius: 4px; font-size: 11px;
-    cursor: pointer; border: 1px solid #555; word-break: break-all; }
-  .copyable:hover { background: #3a3a3a; }
-  .row { display: flex; gap: 6px; margin-bottom: 6px; }
-  .row input { margin-bottom: 0; }
-  #transcripts { background: #111; border: 1px solid #333; border-radius: 4px;
-    min-height: 80px; padding: 8px; font-size: 12px; line-height: 2; }
-  .seg { margin: 2px 0; }
-  .seg .who { color: #a78bfa; }
-  .seg .txt { color: #e0e0e0; }
-  audio { width: 100%; margin-top: 4px; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #202124; color: #e8eaed; min-height: 100vh; }
+
+/* ── 로그인 화면 ── */
+#loginScreen {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100vh; gap: 16px;
+}
+#loginScreen h1 { font-size: 28px; color: #8ab4f8; }
+#loginScreen p  { color: #9aa0a6; font-size: 14px; }
+#loginScreen input {
+  width: 320px; padding: 12px 16px; background: #303134; border: 1px solid #5f6368;
+  color: #e8eaed; border-radius: 8px; font-size: 14px;
+}
+#loginScreen input:focus { outline: none; border-color: #8ab4f8; }
+
+/* ── 홈 화면 ── */
+#homeScreen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 32px; }
+#homeScreen h1 { font-size: 40px; font-weight: 400; text-align: center; line-height: 1.3; }
+#homeScreen .sub { color: #9aa0a6; font-size: 16px; text-align: center; }
+.home-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.home-row input {
+  padding: 14px 20px; background: #303134; border: 1px solid #5f6368;
+  color: #e8eaed; border-radius: 30px; font-size: 15px; width: 280px;
+}
+.home-row input:focus { outline: none; border-color: #8ab4f8; }
+
+/* ── 회의 화면 ── */
+#meetingScreen { display: none; flex-direction: column; height: 100vh; }
+.meeting-header {
+  padding: 12px 20px; background: #292a2d; border-bottom: 1px solid #3c4043;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.meeting-header .info { display: flex; flex-direction: column; }
+.meeting-header .title { font-size: 16px; }
+.meeting-header .meta  { font-size: 12px; color: #9aa0a6; margin-top: 2px; }
+.meeting-body { display: flex; flex: 1; overflow: hidden; }
+.transcript-area { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
+.side-panel { width: 280px; background: #292a2d; border-left: 1px solid #3c4043; display: flex; flex-direction: column; }
+.side-title { padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #3c4043; }
+.participant-list { flex: 1; overflow-y: auto; padding: 8px; }
+.participant-item { padding: 8px 10px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.participant-item:hover { background: #3c4043; }
+.avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+.role-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: #3c4043; color: #9aa0a6; margin-left: auto; }
+.role-badge.admin { background: #1a3a5c; color: #8ab4f8; }
+.log-area { height: 180px; border-top: 1px solid #3c4043; overflow-y: auto; padding: 8px; font-size: 11px; font-family: monospace; }
+.meeting-footer {
+  padding: 16px; background: #292a2d; border-top: 1px solid #3c4043;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+}
+
+/* ── 버튼 ── */
+.btn { padding: 12px 20px; border: none; border-radius: 30px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.15s; }
+.btn-primary { background: #8ab4f8; color: #202124; }
+.btn-primary:hover { background: #93bbf9; }
+.btn-outline { background: transparent; border: 1px solid #5f6368; color: #e8eaed; }
+.btn-outline:hover { background: #3c4043; }
+.btn-icon { width: 48px; height: 48px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: background 0.15s; }
+.btn-icon.gray   { background: #3c4043; }
+.btn-icon.gray:hover   { background: #4c4f52; }
+.btn-icon.active { background: #8ab4f8; }
+.btn-icon.red    { background: #ea4335; }
+.btn-icon.red:hover    { background: #f25547; }
+.btn-pill { border: none; border-radius: 24px; padding: 0 20px; height: 48px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.btn-pill.green { background: #34a853; color: #fff; }
+.btn-pill.red   { background: #ea4335; color: #fff; }
+
+/* ── 자막 ── */
+.seg { background: #292a2d; border-radius: 12px; padding: 10px 14px; max-width: 720px; }
+.seg .who  { font-size: 12px; color: #8ab4f8; margin-bottom: 4px; }
+.seg .text { font-size: 15px; line-height: 1.5; }
+.seg.me    { align-self: flex-end; background: #1a3a5c; }
+.seg.me .who { color: #93bbf9; }
+
+/* ── 상태 ── */
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.dot-live   { background: #34a853; }
+.dot-off    { background: #9aa0a6; }
+.log .tx    { color: #34a853; }
+.log .rx    { color: #8ab4f8; }
+.log .err   { color: #ea4335; }
+.log .sys   { color: #9aa0a6; }
 </style>
 </head>
 <body>
-<h1>🎙 온라인 회의 WebSocket 테스트</h1>
-<p style="color:#888;font-size:12px;margin-bottom:16px;">두 탭에서 열어 ADMIN / GUEST 역할로 테스트하세요.</p>
 
-<div class="grid">
+<!-- ── 로그인 화면 ── -->
+<div id="loginScreen">
+  <h1>MeetAI 테스트</h1>
+  <p>테스트용 Profile ID (UUID)를 입력하면 로그인된 상태로 시작합니다.</p>
+  <input id="profileIdInput" placeholder="내 Profile ID (UUID)" onkeydown="if(event.key==='Enter')login()" />
+  <button class="btn btn-primary" onclick="login()">시작하기</button>
+</div>
 
-  <!-- ── STEP 1: 회의 생성 ── -->
-  <div class="card">
-    <h2>① 회의 생성 (ADMIN)</h2>
-    <div class="field-label">제목</div>
-    <input id="meetingTitle" value="테스트 회의" />
-    <div class="field-label">내 Profile ID (UUID)</div>
-    <input id="adminProfileId" value="" placeholder="Supabase user UUID" />
-    <button class="btn-blue" onclick="createMeeting()">회의 생성</button>
-
-    <div style="margin-top:10px;" id="createResult" hidden>
-      <div class="field-label">Meeting ID</div>
-      <div class="copyable" onclick="copy(this)" id="outMeetingId">-</div>
-      <div class="field-label" style="margin-top:6px;">초대 Token</div>
-      <div class="copyable" onclick="copy(this)" id="outToken">-</div>
-      <p style="color:#888;font-size:11px;margin-top:6px;">👆 클릭하면 복사됩니다.</p>
-    </div>
+<!-- ── 홈 화면 ── -->
+<div id="homeScreen">
+  <div>
+    <h1>화상 회의</h1>
+    <p class="sub" style="margin-top:8px">MeetAI WebSocket 테스트</p>
   </div>
-
-  <!-- ── STEP 2: WS 연결 ── -->
-  <div class="card">
-    <h2>② WebSocket 연결</h2>
-    <div class="field-label">Meeting ID</div>
-    <input id="wsMeetingId" placeholder="550e8400-..." />
-    <div class="field-label">Token (GUEST 필수, ADMIN 생략 가능)</div>
-    <input id="wsToken" placeholder="a1b2c3..." />
-    <div class="field-label">내 Profile ID</div>
-    <input id="wsProfileId" placeholder="UUID" />
-    <div class="row">
-      <button class="btn-green" onclick="wsConnect()">연결</button>
-      <button class="btn-red" onclick="wsDisconnect()" id="btnDisconnect" disabled>연결 끊기</button>
-    </div>
-    <div class="status-row">
-      상태 <span class="badge off" id="wsStatus">오프라인</span>
-    </div>
+  <div class="home-row">
+    <button class="btn btn-primary" onclick="createMeeting()">+ 새 회의</button>
+    <input id="joinCodeInput" placeholder="초대 코드 입력" onkeydown="if(event.key==='Enter')joinWithCode()" />
+    <button class="btn btn-outline" onclick="joinWithCode()">참여</button>
   </div>
+  <p style="font-size:12px;color:#5f6368;">
+    Profile ID: <span id="displayProfileId" style="color:#8ab4f8"></span>
+    <button onclick="logout()" style="background:none;border:none;color:#9aa0a6;cursor:pointer;font-size:12px;margin-left:8px;">변경</button>
+  </p>
+</div>
 
-  <!-- ── 로그 ── -->
-  <div class="card full">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-      <h2>WS 메시지 로그</h2>
-      <button class="btn-gray" onclick="clearLog()">지우기</button>
-    </div>
-    <div class="log" id="log"></div>
-  </div>
-
-  <!-- ── STEP 3: 회의 제어 ── -->
-  <div class="card">
-    <h2>③ 회의 제어 (ADMIN 전용)</h2>
-    <button class="btn-green" onclick="sendJson({type:'start_meeting'})">▶ 회의 시작</button>
-    <button class="btn-red"   onclick="sendJson({type:'end_meeting'})">■ 회의 종료</button>
-    <div style="margin-top:10px;">
-      <div class="field-label">강퇴할 Profile ID</div>
-      <div class="row">
-        <input id="kickTarget" placeholder="UUID" />
-        <button class="btn-red" onclick="kick()" style="white-space:nowrap">강퇴</button>
+<!-- ── 회의 화면 ── -->
+<div id="meetingScreen">
+  <div class="meeting-header">
+    <div class="info">
+      <div class="title" id="meetingTitle">회의</div>
+      <div class="meta">
+        <span class="status-dot dot-off" id="statusDot"></span>
+        <span id="statusText">연결 중...</span>
+        &nbsp;·&nbsp; <span id="meetingIdDisplay"></span>
       </div>
     </div>
+    <button class="btn btn-outline" onclick="copyInvite()" style="font-size:13px">초대 코드 복사</button>
   </div>
 
-  <!-- ── STEP 4: WebRTC ── -->
-  <div class="card">
-    <h2>④ WebRTC 연결</h2>
-    <div class="field-label">상대방 Profile ID</div>
-    <div class="row">
-      <input id="peerTarget" placeholder="상대 UUID" />
-      <button class="btn-blue" onclick="startCall()" style="white-space:nowrap">📞 통화 시작</button>
+  <div class="meeting-body">
+    <div class="transcript-area" id="transcriptArea">
+      <div id="transcriptHint" style="text-align:center;color:#5f6368;margin-top:40px;font-size:14px">
+        회의가 시작되면 자막이 여기에 표시됩니다.
+      </div>
     </div>
-    <div class="field-label" style="margin-top:6px;">원격 오디오</div>
-    <audio id="remoteAudio" autoplay controls></audio>
-  </div>
 
-  <!-- ── STEP 5: STT 오디오 ── -->
-  <div class="card">
-    <h2>⑤ 오디오 STT 스트리밍</h2>
-    <p style="color:#888;font-size:11px;margin-bottom:8px;">마이크 오디오를 5초마다 서버에 전송 → STT 결과를 아래 자막창에 표시</p>
-    <button class="btn-green" onclick="startAudio()" id="btnStartAudio">🎙 녹음 시작</button>
-    <button class="btn-red"   onclick="stopAudio()"  id="btnStopAudio" disabled>⏹ 녹음 중지</button>
-    <div class="status-row" style="margin-top:8px;">
-      녹음 <span class="badge off" id="audioStatus">대기</span>
+    <div class="side-panel">
+      <div class="side-title">참여자 <span id="participantCount" style="color:#9aa0a6"></span></div>
+      <div class="participant-list" id="participantList"></div>
+      <div class="side-title" style="font-size:13px">이벤트 로그</div>
+      <div class="log-area" id="logArea"></div>
     </div>
   </div>
 
-  <!-- ── 참여자 목록 ── -->
-  <div class="card">
-    <h2>⑥ 참여자 목록 조회</h2>
-    <div class="row">
-      <input id="partMeetingId" placeholder="Meeting ID" />
-      <button class="btn-blue" onclick="fetchParticipants()" style="white-space:nowrap">조회</button>
-    </div>
-    <div id="partResult" style="font-size:11px;margin-top:6px;"></div>
+  <div class="meeting-footer">
+    <button class="btn-icon gray" id="btnMic" onclick="toggleMic()" title="마이크">🎙</button>
+    <button class="btn-pill green" onclick="startMeeting()">▶ 회의 시작</button>
+    <button class="btn-icon red"  onclick="leaveMeeting()" title="나가기">📞</button>
+    <button class="btn-pill red"  onclick="endMeeting()">■ 회의 종료</button>
   </div>
-
-  <!-- ── STT 자막 ── -->
-  <div class="card full">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-      <h2>실시간 자막 (transcript)</h2>
-      <button class="btn-gray" onclick="document.getElementById('transcripts').innerHTML=''">지우기</button>
-    </div>
-    <div id="transcripts"></div>
-  </div>
-
 </div>
 
 <script>
 const BASE = 'https://backend-production-894a3.up.railway.app';
-let ws = null;
+
+let myProfileId  = localStorage.getItem('profileId') || '';
+let meetingId    = '';
+let inviteToken  = '';
+let ws           = null;
 let mediaRecorder = null;
-const peerConnections = {};
+let micOn        = false;
+let participants = {};
 
-// ── 유틸 ──────────────────────────────────────────────
-function log(msg, cls = 'sys') {
-  const el = document.getElementById('log');
-  const t = new Date().toLocaleTimeString('ko', { hour12: false });
-  el.innerHTML += `<div class="${cls}">[${t}] ${msg}</div>`;
-  el.scrollTop = el.scrollHeight;
+// ── 로그인 ────────────────────────────────────────────
+function login() {
+  const val = document.getElementById('profileIdInput').value.trim();
+  if (!val) return;
+  myProfileId = val;
+  localStorage.setItem('profileId', val);
+  showHome();
 }
-function clearLog() { document.getElementById('log').innerHTML = ''; }
-function copy(el) { navigator.clipboard.writeText(el.textContent); el.style.outline = '2px solid #6ee7b7'; setTimeout(() => el.style.outline = '', 800); }
-function sendJson(obj) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) { log('WS 미연결', 'err'); return; }
-  ws.send(JSON.stringify(obj));
-  log('→ ' + JSON.stringify(obj), 'tx');
+function logout() {
+  localStorage.removeItem('profileId');
+  myProfileId = '';
+  document.getElementById('profileIdInput').value = '';
+  show('loginScreen');
+}
+function showHome() {
+  document.getElementById('displayProfileId').textContent = myProfileId;
+  show('homeScreen');
 }
 
-// ── ① 회의 생성 ──────────────────────────────────────
+// ── 화면 전환 ─────────────────────────────────────────
+function show(id) {
+  ['loginScreen','homeScreen','meetingScreen'].forEach(s => {
+    const el = document.getElementById(s);
+    el.style.display = s === id ? 'flex' : 'none';
+  });
+}
+if (myProfileId) showHome(); else show('loginScreen');
+
+// ── 회의 생성 ─────────────────────────────────────────
 async function createMeeting() {
-  const title = document.getElementById('meetingTitle').value;
-  const profileId = document.getElementById('adminProfileId').value.trim();
-  if (!profileId) { alert('Profile ID를 입력하세요.'); return; }
   try {
     const res = await fetch(`${BASE}/api/v1/meetings/online`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Id': profileId },
-      body: JSON.stringify({ title })
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': myProfileId },
+      body: JSON.stringify({ title: '새 회의' })
     });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     const data = await res.json();
-    document.getElementById('outMeetingId').textContent = data.meetingId || JSON.stringify(data);
-    document.getElementById('outToken').textContent = data.token || '-';
-    document.getElementById('createResult').hidden = false;
-    // 하단 입력란 자동 채우기
-    document.getElementById('wsMeetingId').value = data.meetingId || '';
-    document.getElementById('wsToken').value = data.token || '';
-    document.getElementById('wsProfileId').value = profileId;
-    document.getElementById('partMeetingId').value = data.meetingId || '';
-    log(`회의 생성 완료 — meetingId=${data.meetingId}`, 'sys');
-  } catch(e) { log('생성 실패: ' + e.message, 'err'); }
+    enterMeeting(data.meetingId, data.token);
+  } catch(e) { alert('회의 생성 실패: ' + e.message); }
 }
 
-// ── ② WebSocket 연결 ─────────────────────────────────
-function wsConnect() {
-  const meetingId = document.getElementById('wsMeetingId').value.trim();
-  const token     = document.getElementById('wsToken').value.trim();
-  const profileId = document.getElementById('wsProfileId').value.trim();
-  if (!meetingId || !profileId) { alert('Meeting ID와 Profile ID를 입력하세요.'); return; }
+// ── 코드로 참여 ───────────────────────────────────────
+function joinWithCode() {
+  const code = document.getElementById('joinCodeInput').value.trim();
+  if (!code) { alert('초대 코드를 입력하세요.'); return; }
+  if (code.includes(':')) {
+    const [mid, tok] = code.split(':');
+    enterMeeting(mid.trim(), tok.trim());
+  } else {
+    const mid = prompt('Meeting ID를 입력하세요:');
+    if (mid) enterMeeting(mid.trim(), code);
+  }
+}
 
+// ── 회의 화면 진입 ────────────────────────────────────
+function enterMeeting(mid, token) {
+  meetingId    = mid;
+  inviteToken  = token;
+  participants = {};
+  document.getElementById('meetingIdDisplay').textContent = mid.slice(0,8) + '...';
+  document.getElementById('meetingTitle').textContent = '회의';
+  document.getElementById('transcriptArea').innerHTML =
+    '<div id="transcriptHint" style="text-align:center;color:#5f6368;margin-top:40px;font-size:14px">회의가 시작되면 자막이 여기에 표시됩니다.</div>';
+  document.getElementById('logArea').innerHTML = '';
+  renderParticipants();
+  show('meetingScreen');
+  connectWs(token);
+}
+
+// ── WebSocket ─────────────────────────────────────────
+function connectWs(token) {
+  setStatus(false, '연결 중...');
   const url = `wss://backend-production-894a3.up.railway.app/api/v1/online/ws/${meetingId}`
-            + `?token=${token}&profileId=${profileId}`;
+            + `?token=${encodeURIComponent(token)}&profileId=${encodeURIComponent(myProfileId)}`;
   ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
-
-  ws.onopen = () => {
-    setWsStatus(true);
-    log(`연결됨 → ${url}`, 'sys');
-  };
-
+  ws.onopen    = () => setStatus(true, '연결됨');
+  ws.onclose   = (e) => { setStatus(false, `연결 끊김 (${e.code})`); stopMic(); };
+  ws.onerror   = () => log('WS 오류', 'err');
   ws.onmessage = (e) => {
-    if (typeof e.data === 'string') {
+    if (typeof e.data !== 'string') return;
+    try {
       const msg = JSON.parse(e.data);
-      log('← ' + JSON.stringify(msg), 'rx');
-      handleServerMessage(msg);
-    }
+      log('← ' + msg.type, 'rx');
+      handleMsg(msg);
+    } catch(_) {}
   };
-
-  ws.onclose = (e) => {
-    setWsStatus(false);
-    log(`연결 종료 (code=${e.code})`, 'sys');
-  };
-
-  ws.onerror = () => log('WS 오류', 'err');
 }
 
-function wsDisconnect() {
-  ws?.close();
+function send(obj) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+    log('→ ' + obj.type, 'tx');
+  } else {
+    log('WS 미연결', 'err');
+  }
 }
 
-function setWsStatus(on) {
-  const el = document.getElementById('wsStatus');
-  el.textContent = on ? '온라인' : '오프라인';
-  el.className = 'badge ' + (on ? 'on' : 'off');
-  document.getElementById('btnDisconnect').disabled = !on;
-}
-
-// ── 서버 메시지 처리 ──────────────────────────────────
-async function handleServerMessage(msg) {
-  switch (msg.type) {
+function handleMsg(msg) {
+  switch(msg.type) {
+    case 'room_info':
+      if (msg.title) document.getElementById('meetingTitle').textContent = msg.title;
+      (msg.participants || []).forEach(addParticipant);
+      break;
     case 'participant_joined':
-      // 새 참여자 → Offer 생성
-      if (msg.profileId !== document.getElementById('wsProfileId').value.trim()) {
-        await createOffer(msg.profileId);
-      }
+      addParticipant(msg);
       break;
-    case 'offer':
-      await handleOffer(msg.from, msg.sdp);
+    case 'participant_left':
+      removeParticipant(msg.profileId);
       break;
-    case 'answer':
-      await peerConnections[msg.from]?.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
-      break;
-    case 'ice_candidate':
-      await peerConnections[msg.from]?.addIceCandidate(msg.candidate);
-      break;
-    case 'transcript':
-      appendTranscript(msg);
+    case 'meeting_started':
+      setStatus(true, '🔴 진행 중');
       break;
     case 'meeting_ended':
-      Object.values(peerConnections).forEach(pc => pc.close());
+      setStatus(false, '종료됨');
+      stopMic();
+      break;
+    case 'kicked':
+      alert('강퇴되었습니다.');
+      leaveMeeting();
+      break;
+    case 'transcript':
+      addTranscript(msg);
       break;
   }
 }
 
-// ── ③ 회의 제어 ──────────────────────────────────────
-function kick() {
-  const target = document.getElementById('kickTarget').value.trim();
-  if (target) sendJson({ type: 'kick', profileId: target });
+// ── 참여자 ────────────────────────────────────────────
+function addParticipant(p) {
+  participants[p.profileId] = p;
+  renderParticipants();
+}
+function removeParticipant(pid) {
+  delete participants[pid];
+  renderParticipants();
+}
+function renderParticipants() {
+  const list = Object.values(participants);
+  document.getElementById('participantCount').textContent = `(${list.length})`;
+  document.getElementById('participantList').innerHTML = list.map(p => {
+    const isMe  = p.profileId === myProfileId;
+    const color = strColor(p.profileId);
+    const init  = (p.displayName || p.profileId).charAt(0).toUpperCase();
+    return `<div class="participant-item">
+      <div class="avatar" style="background:${color}">${init}</div>
+      <div style="font-size:13px">${p.displayName || p.profileId.slice(0,8)}${isMe ? ' (나)' : ''}</div>
+      <span class="role-badge ${p.role === 'ADMIN' ? 'admin' : ''}">${p.role}</span>
+    </div>`;
+  }).join('');
+}
+function strColor(s) {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h},45%,36%)`;
 }
 
-// ── ④ WebRTC ─────────────────────────────────────────
-function makePeerConnection(profileId) {
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-  });
-  peerConnections[profileId] = pc;
-
-  pc.onicecandidate = ({ candidate }) => {
-    if (candidate) sendJson({ type: 'ice_candidate', to: profileId, candidate });
-  };
-
-  pc.ontrack = (e) => {
-    document.getElementById('remoteAudio').srcObject = e.streams[0];
-    log(`원격 오디오 수신 from ${profileId}`, 'sys');
-  };
-
-  return pc;
+// ── 자막 ─────────────────────────────────────────────
+function addTranscript(msg) {
+  const area = document.getElementById('transcriptArea');
+  const hint = document.getElementById('transcriptHint');
+  if (hint) hint.remove();
+  const isMe = msg.profileId === myProfileId;
+  const div = document.createElement('div');
+  div.className = 'seg' + (isMe ? ' me' : '');
+  div.innerHTML = `<div class="who">${msg.speakerDisplay || (msg.profileId || '').slice(0,8)}</div>
+    <div class="text">${msg.text}</div>`;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
 }
 
-async function startCall() {
-  const target = document.getElementById('peerTarget').value.trim();
-  if (!target) { alert('상대방 Profile ID를 입력하세요.'); return; }
-  await createOffer(target);
+// ── 마이크 / STT ─────────────────────────────────────
+async function toggleMic() {
+  micOn ? stopMic() : await startMic();
 }
-
-async function createOffer(targetProfileId) {
-  const pc = makePeerConnection(targetProfileId);
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  stream.getTracks().forEach(t => pc.addTrack(t, stream));
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  sendJson({ type: 'offer', to: targetProfileId, sdp: offer.sdp });
-}
-
-async function handleOffer(fromProfileId, sdp) {
-  const pc = makePeerConnection(fromProfileId);
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  stream.getTracks().forEach(t => pc.addTrack(t, stream));
-  await pc.setRemoteDescription({ type: 'offer', sdp });
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  sendJson({ type: 'answer', to: fromProfileId, sdp: answer.sdp });
-}
-
-// ── ⑤ STT 오디오 스트리밍 ────────────────────────────
-async function startAudio() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) { alert('WS 먼저 연결하세요.'); return; }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) ?? '';
-  mediaRecorder = new MediaRecorder(stream, { mimeType });
-  mediaRecorder.ondataavailable = async (e) => {
-    if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
-      const buf = await e.data.arrayBuffer();
-      ws.send(buf);
-      log(`오디오 전송 ${buf.byteLength} bytes`, 'tx');
-    }
-  };
-  mediaRecorder.start(5000);
-  document.getElementById('audioStatus').textContent = '녹음 중';
-  document.getElementById('audioStatus').className = 'badge on';
-  document.getElementById('btnStartAudio').disabled = true;
-  document.getElementById('btnStopAudio').disabled = false;
-  log('오디오 STT 스트리밍 시작 (5초 간격)', 'sys');
-}
-
-function stopAudio() {
-  mediaRecorder?.stop();
-  mediaRecorder?.stream.getTracks().forEach(t => t.stop());
-  mediaRecorder = null;
-  document.getElementById('audioStatus').textContent = '대기';
-  document.getElementById('audioStatus').className = 'badge off';
-  document.getElementById('btnStartAudio').disabled = false;
-  document.getElementById('btnStopAudio').disabled = true;
-  log('오디오 스트리밍 중지', 'sys');
-}
-
-// ── ⑥ 참여자 조회 ────────────────────────────────────
-async function fetchParticipants() {
-  const id = document.getElementById('partMeetingId').value.trim();
-  if (!id) return;
+async function startMic() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { alert('WS에 연결된 후 사용하세요.'); return; }
   try {
-    const res = await fetch(`${BASE}/api/v1/meetings/${id}/participants`);
-    const data = await res.json();
-    const el = document.getElementById('partResult');
-    if (!Array.isArray(data) || data.length === 0) { el.textContent = '참여자 없음'; return; }
-    el.innerHTML = data.map(p =>
-      `<div style="margin:2px 0;padding:4px;background:#1a1a1a;border-radius:3px;">
-        <span style="color:#a78bfa">${p.role}</span>
-        <span style="color:#888;margin:0 6px">|</span>
-        <span style="color:#6ee7b7">${p.profileId}</span>
-      </div>`
-    ).join('');
-  } catch(e) { document.getElementById('partResult').textContent = '조회 실패: ' + e.message; }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    mediaRecorder.ondataavailable = async (e) => {
+      if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN)
+        ws.send(await e.data.arrayBuffer());
+    };
+    mediaRecorder.start(5000);
+    micOn = true;
+    document.getElementById('btnMic').className = 'btn-icon active';
+    log('마이크 ON (5초 간격 전송)', 'sys');
+  } catch(e) { log('마이크 오류: ' + e.message, 'err'); }
+}
+function stopMic() {
+  if (!micOn) return;
+  mediaRecorder?.stop();
+  mediaRecorder?.stream?.getTracks().forEach(t => t.stop());
+  mediaRecorder = null;
+  micOn = false;
+  document.getElementById('btnMic').className = 'btn-icon gray';
+  log('마이크 OFF', 'sys');
 }
 
-// ── 자막 표시 ─────────────────────────────────────────
-function appendTranscript(msg) {
-  const el = document.getElementById('transcripts');
-  el.innerHTML += `<div class="seg"><span class="who">[${msg.speakerDisplay || msg.profileId}]</span> <span class="txt">${msg.text}</span></div>`;
+// ── 회의 제어 ─────────────────────────────────────────
+function startMeeting() { send({ type: 'start_meeting' }); }
+function endMeeting()   { send({ type: 'end_meeting' }); }
+function leaveMeeting() { stopMic(); ws?.close(); showHome(); }
+
+// ── 초대 코드 복사 ────────────────────────────────────
+function copyInvite() {
+  const code = `${meetingId}:${inviteToken}`;
+  navigator.clipboard.writeText(code).then(() => alert('복사됨!\n' + code));
+}
+
+// ── 상태 표시 ─────────────────────────────────────────
+function setStatus(live, text) {
+  document.getElementById('statusDot').className = 'status-dot ' + (live ? 'dot-live' : 'dot-off');
+  document.getElementById('statusText').textContent = text;
+}
+
+// ── 로그 ─────────────────────────────────────────────
+function log(msg, cls = 'sys') {
+  const el = document.getElementById('logArea');
+  if (!el) return;
+  const t = new Date().toLocaleTimeString('ko', { hour12: false });
+  el.innerHTML += `<div class="${cls} log">[${t}] ${msg}</div>`;
   el.scrollTop = el.scrollHeight;
 }
 </script>
