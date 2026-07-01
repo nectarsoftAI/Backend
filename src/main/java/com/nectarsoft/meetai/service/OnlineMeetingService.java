@@ -34,7 +34,7 @@ public class OnlineMeetingService {
         Meeting meeting = Meeting.builder()
                 .userId(profileId)
                 .title(title)
-                .meetingType(MeetingType.DISCORD)
+                .meetingType(MeetingType.group)
                 .status(MeetingStatus.PROCESSING)
                 .meetingDate(OffsetDateTime.now())
                 .inviteToken(token)
