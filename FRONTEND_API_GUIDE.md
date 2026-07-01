@@ -11,10 +11,11 @@ https://backend-production-894a3.up.railway.app
 ## 목차
 
 1. [STT — 파일 업로드 변환](#1-stt--파일-업로드-변환)
-2. [회의 결과 조회](#2-회의-결과-조회)
-3. [실시간 라이브 STT (WebSocket)](#3-실시간-라이브-stt-websocket)
-4. [온라인 회의 (WebSocket + WebRTC)](#4-온라인-회의-websocket--webrtc)
-5. [에러 코드](#5-에러-코드)
+2. [회의 목록 조회 (Supabase REST)](#2-회의-목록-조회-supabase-rest)
+3. [회의 상세 조회 (백엔드 REST)](#3-회의-상세-조회-백엔드-rest)
+4. [실시간 라이브 STT (WebSocket)](#4-실시간-라이브-stt-websocket)
+5. [온라인 회의 (WebSocket + WebRTC)](#5-온라인-회의-websocket--webrtc)
+6. [에러 코드](#6-에러-코드)
 
 ---
 
@@ -90,9 +91,105 @@ async function transcribeFile(audioFile) {
 
 ---
 
-## 2. 회의 결과 조회
+## 2. 회의 목록 조회 (Supabase REST)
+
+회의 목록은 Supabase REST API를 프론트엔드에서 직접 호출합니다.
+RLS 정책이 `auth.uid() = user_id`를 자동으로 검사하므로 **본인 회의만** 반환됩니다.
+
+### Supabase 설정값
+
+```
+SUPABASE_URL  = https://gpnhfwtbmtvnexbxvdqi.supabase.co
+SUPABASE_ANON = (환경변수 참고)
+```
+
+### Supabase RLS 정책 (최초 1회 SQL Editor에서 실행)
+
+```sql
+-- 본인 회의 또는 참여자로 등록된 회의만 조회
+CREATE POLICY "users_select_accessible_meetings"
+ON meetings FOR SELECT
+USING (
+  auth.uid() = user_id
+  OR EXISTS (
+    SELECT 1 FROM meeting_participants mp
+    WHERE mp.meeting_id = meetings.meeting_id
+    AND mp.profile_id = auth.uid()
+  )
+);
+```
+
+### Request
+
+```
+GET https://gpnhfwtbmtvnexbxvdqi.supabase.co/rest/v1/meetings
+  ?select=*
+  &order=created_at.desc
+  &limit=6
+  &offset=0
+
+Headers:
+  apikey: <SUPABASE_ANON_KEY>
+  Authorization: Bearer <user-access-token>   ← Supabase 로그인 후 받은 JWT
+```
+
+### Response
+
+Supabase REST 표준 배열 응답:
+
+```json
+[
+  {
+    "meeting_id": "550e8400-e29b-41d4-a716-446655440000",
+    "user_id": "uuid",
+    "title": "팀 스프린트 회의",
+    "meeting_type": "DISCORD",
+    "status": "COMPLETED",
+    "duration_seconds": null,
+    "meeting_date": "2026-07-01T10:00:00+00:00",
+    "meeting_token": "a1b2c3d4e5",
+    "created_at": "2026-07-01T10:00:01+00:00",
+    "updated_at": "2026-07-01T10:30:00+00:00"
+  }
+]
+```
+
+> 전체 개수는 `Prefer: count=exact` 헤더를 추가하면 응답 헤더 `Content-Range`로 받을 수 있습니다.
+
+### JavaScript 예시
+
+```javascript
+const SUPABASE_URL  = 'https://gpnhfwtbmtvnexbxvdqi.supabase.co';
+const SUPABASE_ANON = '<SUPABASE_ANON_KEY>';
+
+async function listMeetings(accessToken, { page = 0, size = 6 } = {}) {
+  const offset = page * size;
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/meetings?select=*&order=created_at.desc&limit=${size}&offset=${offset}`,
+    {
+      headers: {
+        'apikey': SUPABASE_ANON,
+        'Authorization': `Bearer ${accessToken}`,
+        'Prefer': 'count=exact',   // 전체 개수 포함
+      },
+    }
+  );
+  if (!res.ok) throw new Error(await res.text());
+  const total = res.headers.get('Content-Range')?.split('/')[1];
+  return { meetings: await res.json(), total: Number(total) };
+}
+
+// 사용 예시
+// accessToken은 Supabase Auth 로그인 후 data.session.access_token
+const { meetings, total } = await listMeetings(session.access_token);
+```
+
+---
+
+## 3. 회의 상세 조회 (백엔드 REST)
 
 STT 변환 완료 후 회의 전체 정보와 대화록을 조회합니다.
+트랜스크립트 + 요약이 조인되어 반환되므로 백엔드 API를 사용합니다.
 
 ### Request
 
@@ -151,7 +248,7 @@ async function getMeeting(meetingId) {
 
 ---
 
-## 3. 실시간 라이브 STT (WebSocket)
+## 4. 실시간 라이브 STT (WebSocket)
 
 마이크 오디오를 실시간으로 전송하면 5초마다 STT 결과를 받습니다.
 
@@ -325,7 +422,7 @@ await live.startRecording();
 
 ---
 
-## 4. 온라인 회의 (WebSocket + WebRTC)
+## 5. 온라인 회의 (WebSocket + WebRTC)
 
 여러 참여자가 실시간으로 화상/음성 회의를 진행하면서 STT 자막을 받습니다.
 
@@ -676,7 +773,7 @@ await meeting.startAudioStream();              // STT 스트리밍
 
 ---
 
-## 5. 에러 코드
+## 6. 에러 코드
 
 | HTTP 상태 | 상황 |
 |-----------|------|
