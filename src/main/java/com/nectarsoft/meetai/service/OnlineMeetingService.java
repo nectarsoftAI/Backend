@@ -22,10 +22,14 @@ public class OnlineMeetingService {
     private final MeetingRepository meetingRepo;
     private final MeetingParticipantRepository participantRepo;
 
+    private String generateToken() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+    }
+
     // 회의 생성 — 초대 토큰 자동 발급, ADMIN 자동 등록
     @Transactional
     public Map<String, String> createMeeting(String title, UUID profileId) {
-        String token = UUID.randomUUID().toString().replace("-", "");
+        String token = generateToken();
 
         Meeting meeting = Meeting.builder()
                 .userId(profileId)
@@ -58,7 +62,7 @@ public class OnlineMeetingService {
                 .filter(p -> p.isCanInvite())
                 .orElseThrow(() -> new Exceptions.AccessDeniedError("초대 권한이 없습니다."));
 
-        String token = UUID.randomUUID().toString().replace("-", "");
+        String token = generateToken();
         meeting.setInviteToken(token);
         meetingRepo.save(meeting);
 
