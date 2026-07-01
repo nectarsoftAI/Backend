@@ -38,8 +38,15 @@ public class Meeting {
     @Column(name = "meeting_date", columnDefinition = "timestamptz")
     private OffsetDateTime meetingDate;
 
-    @Column(name = "meeting_token", unique = true)
+    @Column(name = "meeting_token", unique = true, length = 10)
     private String inviteToken;
+
+    @PrePersist
+    private void assignToken() {
+        if (inviteToken == null) {
+            inviteToken = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        }
+    }
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, columnDefinition = "timestamptz")
