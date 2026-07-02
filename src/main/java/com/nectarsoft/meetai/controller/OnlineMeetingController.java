@@ -1,6 +1,7 @@
 package com.nectarsoft.meetai.controller;
 
 import com.nectarsoft.meetai.dto.*;
+import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.service.OnlineMeetingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -33,6 +34,17 @@ public class OnlineMeetingController {
             @RequestHeader("X-User-Id") UUID profileId) {
         String token = onlineMeetingService.regenerateInviteToken(meetingId, profileId);
         return ResponseEntity.ok(new InviteResponse(meetingId.toString(), token));
+    }
+
+    // 초대 토큰으로 회의 조회 (참여자가 코드 입력 시 호출)
+    @GetMapping("/by-token/{token}")
+    public ResponseEntity<Map<String, String>> getMeetingByToken(@PathVariable String token) {
+        Meeting meeting = onlineMeetingService.findByToken(token)
+                .orElseThrow(() -> new com.nectarsoft.meetai.core.exception.Exceptions.MeetingNotFoundError(token));
+        return ResponseEntity.ok(Map.of(
+                "meetingId", meeting.getMeetingId().toString(),
+                "title", meeting.getTitle() != null ? meeting.getTitle() : ""
+        ));
     }
 
     // 참여자 목록 조회
