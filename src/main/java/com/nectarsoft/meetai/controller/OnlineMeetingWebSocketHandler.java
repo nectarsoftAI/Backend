@@ -49,13 +49,11 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
-        // ADMIN은 토큰 없이 접속 가능, GUEST는 토큰 검증
+        // ADMIN: 회의 생성자 UUID로 판단 (DB 조회 불필요)
         UUID pId = UUID.fromString(profileId);
-        boolean isAdmin = participantRepo.findByMeetingMeetingIdAndProfileId(UUID.fromString(meetingId), pId)
-                .map(p -> p.getRole() == ParticipantRole.ADMIN)
-                .orElse(false);
+        boolean isAdmin = pId.equals(meeting.getUserId());
 
-        if (!isAdmin && (token == null || !token.equals(meeting.getInviteToken()))) {
+        if (!isAdmin && (token == null || !token.equalsIgnoreCase(meeting.getInviteToken()))) {
             log.warn("[OnlineWS] 토큰 불일치 — meetingId={}, profileId={}", meetingId, profileId);
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
@@ -64,20 +62,26 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         session.setBinaryMessageSizeLimit(10 * 1024 * 1024);
         session.setTextMessageSizeLimit(64 * 1024);
 
-        // GUEST 첫 입장 시 DB 등록
-        if (!participantRepo.existsByMeetingMeetingIdAndProfileId(UUID.fromString(meetingId), pId)) {
-            participantRepo.save(MeetingParticipant.builder()
-                    .meeting(meeting).profileId(pId)
-                    .role(ParticipantRole.GUEST)
-                    .canInvite(false).canEdit(false).canDelete(false).canRunMeeting(false)
-                    .build());
+        // 세션에 role 저장 (이후 권한 체크에 사용)
+        String role = isAdmin ? "ADMIN" : "GUEST";
+        session.getAttributes().put("role", role);
+
+        // GUEST 첫 입장 시 DB 등록 (실패해도 WS 연결은 유지)
+        if (!isAdmin) {
+            try {
+                if (!participantRepo.existsByMeetingMeetingIdAndProfileId(UUID.fromString(meetingId), pId)) {
+                    participantRepo.save(MeetingParticipant.builder()
+                            .meeting(meeting).profileId(pId)
+                            .role(ParticipantRole.GUEST)
+                            .canInvite(false).canEdit(false).canDelete(false).canRunMeeting(false)
+                            .build());
+                }
+            } catch (Exception e) {
+                log.warn("[OnlineWS] 게스트 DB 등록 실패 (무시) — profileId={}: {}", profileId, e.getMessage());
+            }
         }
 
         roomManager.join(meetingId, profileId, session);
-
-        // 기존 참여자들에게 입장 알림
-        String role = participantRepo.findByMeetingMeetingIdAndProfileId(UUID.fromString(meetingId), pId)
-                .map(p -> p.getRole().name()).orElse("GUEST");
         roomManager.broadcastExcept(meetingId, profileId, objectMapper.writeValueAsString(Map.of(
                 "type", "participant_joined",
                 "profileId", profileId,
@@ -201,9 +205,9 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private boolean isAdmin(String meetingId, String profileId) {
-        return participantRepo.findByMeetingMeetingIdAndProfileId(
-                UUID.fromString(meetingId), UUID.fromString(profileId))
-                .map(p -> p.getRole() == ParticipantRole.ADMIN)
+        UUID pId = UUID.fromString(profileId);
+        return meetingRepo.findById(UUID.fromString(meetingId))
+                .map(m -> m.getUserId() != null && m.getUserId().equals(pId))
                 .orElse(false);
     }
 
