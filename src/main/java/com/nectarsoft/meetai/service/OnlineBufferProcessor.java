@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.websocket.OnlineRoomManager;
 import com.nectarsoft.meetai.model.*;
 import com.nectarsoft.meetai.repository.MeetingRepository;
+import com.nectarsoft.meetai.repository.ProfileRepository;
 import com.nectarsoft.meetai.repository.SttResultRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
 import com.nectarsoft.meetai.service.stt.RawSegment;
@@ -30,6 +31,7 @@ public class OnlineBufferProcessor {
     private final OnlineRoomManager roomManager;
     private final FileStorage fileStorage;
     private final MeetingRepository meetingRepo;
+    private final ProfileRepository profileRepo;
     private final SttResultRepository sttResultRepo;
     private final TranscriptRepository transcriptRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -37,6 +39,11 @@ public class OnlineBufferProcessor {
     @Async
     public void process(String meetingId, String profileId, String speakerDisplay, SessionBuffer buffer) {
         try {
+            // profileId → display_name 조회 (없으면 UUID 앞 8자리 사용)
+            String resolvedDisplay = profileRepo.findById(UUID.fromString(profileId))
+                    .map(p -> p.getDisplayName() != null ? p.getDisplayName() : profileId.substring(0, 8))
+                    .orElse(profileId.substring(0, 8));
+
             byte[] audioData = buffer.drainAndBuild();
             log.info("[OnlineSTT] 처리 — meetingId={}, profileId={}, bytes={}", meetingId, profileId, audioData.length);
 
@@ -63,7 +70,7 @@ public class OnlineBufferProcessor {
                         .meeting(meeting)
                         .sttResult(sttResult)
                         .speakerLabel(profileId)
-                        .speakerDisplay(speakerDisplay)
+                        .speakerDisplay(resolvedDisplay)
                         .startSec(seg.getStartSec())
                         .endSec(seg.getEndSec())
                         .content(seg.getText())
@@ -72,7 +79,7 @@ public class OnlineBufferProcessor {
                 roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
                         "type", "transcript",
                         "profileId", profileId,
-                        "speakerDisplay", speakerDisplay,
+                        "speakerDisplay", resolvedDisplay,
                         "text", seg.getText(),
                         "startSec", seg.getStartSec(),
                         "endSec", seg.getEndSec()
