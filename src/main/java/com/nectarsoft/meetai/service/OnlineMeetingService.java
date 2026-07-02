@@ -63,9 +63,9 @@ public class OnlineMeetingService {
         return token;
     }
 
-    // 초대 토큰으로 회의 조회
+    // 초대 토큰으로 회의 조회 — 대소문자 무관하게 조회
     public java.util.Optional<Meeting> findByToken(String token) {
-        return meetingRepo.findByInviteToken(token);
+        return meetingRepo.findByInviteToken(token.toLowerCase());
     }
 
     // 참여자 목록 조회
