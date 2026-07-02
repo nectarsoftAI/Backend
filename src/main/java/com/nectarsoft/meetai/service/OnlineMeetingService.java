@@ -70,6 +70,11 @@ public class OnlineMeetingService {
         return token;
     }
 
+    // 초대 토큰으로 회의 조회
+    public java.util.Optional<Meeting> findByToken(String token) {
+        return meetingRepo.findByInviteToken(token);
+    }
+
     // 참여자 목록 조회
     public List<MeetingParticipant> getParticipants(UUID meetingId) {
         return participantRepo.findByMeetingMeetingId(meetingId);
