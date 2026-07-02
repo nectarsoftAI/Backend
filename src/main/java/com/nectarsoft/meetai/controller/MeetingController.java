@@ -1,5 +1,7 @@
 package com.nectarsoft.meetai.controller;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.SaveSummaryRequest;
@@ -18,14 +20,15 @@ import com.nectarsoft.meetai.repository.TranscriptRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Tag(name = "Meetings", description = "회의 결과 조회/삭제")
@@ -40,6 +43,65 @@ public class MeetingController {
     private final AudioFileRepository audioFileRepo;
     private final MeetingSummaryRepository meetingSummaryRepo;
     private final LlmService llmService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Operation(summary = "회의 목록 조회 (페이징)")
+    @GetMapping
+    public Map<String, Object> listMeetings(
+            @RequestHeader("X-User-Id") UUID profileId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "6") int size) {
+
+        Page<Meeting> meetingPage = meetingRepo.findByUserId(
+                profileId, PageRequest.of(page, size, Sort.by("createdAt").descending()));
+
+        List<UUID> ids = meetingPage.getContent().stream().map(Meeting::getMeetingId).toList();
+
+        Map<UUID, List<Transcript>> txByMeeting = ids.isEmpty() ? Map.of() :
+                transcriptRepo.findByMeetingMeetingIdIn(ids).stream()
+                        .collect(Collectors.groupingBy(t -> t.getMeeting().getMeetingId()));
+
+        Map<UUID, MeetingSummary> sumByMeeting = ids.isEmpty() ? Map.of() :
+                meetingSummaryRepo.findByMeetingMeetingIdIn(ids).stream()
+                        .collect(Collectors.toMap(s -> s.getMeeting().getMeetingId(), s -> s));
+
+        List<Map<String, Object>> meetings = meetingPage.getContent().stream().map(m -> {
+            List<Transcript> txList = txByMeeting.getOrDefault(m.getMeetingId(), List.of());
+
+            List<Map<String, String>> participants = txList.stream()
+                    .collect(Collectors.toMap(Transcript::getSpeakerLabel, Transcript::getSpeakerDisplay, (a, b) -> a))
+                    .entrySet().stream()
+                    .map(e -> Map.of("speakerLabel", e.getKey(), "speakerDisplay", e.getValue()))
+                    .toList();
+
+            List<String> keywords = List.of();
+            MeetingSummary summary = sumByMeeting.get(m.getMeetingId());
+            if (summary != null && summary.getKeywords() != null) {
+                try { keywords = objectMapper.readValue(summary.getKeywords(), new TypeReference<>() {}); }
+                catch (Exception ignored) {}
+            }
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("meetingId", m.getMeetingId().toString());
+            item.put("title", m.getTitle() != null ? m.getTitle() : "");
+            item.put("meetingType", m.getMeetingType().name());
+            item.put("status", m.getStatus().name());
+            item.put("durationSeconds", m.getDurationSeconds());
+            item.put("meetingDate", m.getMeetingDate());
+            item.put("createdAt", m.getCreatedAt());
+            item.put("participants", participants);
+            item.put("keywords", keywords);
+            return item;
+        }).toList();
+
+        return Map.of(
+                "meetings", meetings,
+                "totalCount", meetingPage.getTotalElements(),
+                "page", page,
+                "size", size,
+                "totalPages", meetingPage.getTotalPages()
+        );
+    }
 
     @Operation(summary = "회의 결과 상세 조회 (대화록 포함)")
     @GetMapping("/{meetingId}")
