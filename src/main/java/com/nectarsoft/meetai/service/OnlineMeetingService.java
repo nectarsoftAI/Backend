@@ -26,7 +26,7 @@ public class OnlineMeetingService {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 10);
     }
 
-    // 회의 생성 — 초대 토큰 자동 발급, ADMIN 자동 등록
+    // 회의 생성 — 초대 토큰 자동 발급 (참여자는 WS 연결 시 추가)
     @Transactional
     public Map<String, String> createMeeting(String title, UUID profileId) {
         String token = generateToken();
@@ -40,13 +40,6 @@ public class OnlineMeetingService {
                 .inviteToken(token)
                 .build();
         meetingRepo.save(meeting);
-
-        participantRepo.save(MeetingParticipant.builder()
-                .meeting(meeting)
-                .profileId(profileId)
-                .role(ParticipantRole.ADMIN)
-                .canInvite(true).canEdit(true).canDelete(true).canRunMeeting(true)
-                .build());
 
         log.info("[온라인회의] 생성 — meetingId={}, adminId={}", meeting.getMeetingId(), profileId);
         return Map.of("meetingId", meeting.getMeetingId().toString(), "token", token);
