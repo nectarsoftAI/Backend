@@ -22,14 +22,13 @@ public class ConfidenceFilterDecorator extends SttEngineDecorator {
     @Override
     public List<RawSegment> transcribe(Path audioPath) {
         List<RawSegment> segments = wrapped.transcribe(audioPath);
-        return segments.stream()
-                .map(s -> s.getConfidence() < threshold
-                        ? RawSegment.builder()
-                            .speakerId(s.getSpeakerId())
-                            .startSec(s.getStartSec()).endSec(s.getEndSec())
-                            .text(s.getText()).confidence(s.getConfidence())
-                            .lowConfidence(true).build()
-                        : s)
+        List<RawSegment> filtered = segments.stream()
+                .filter(s -> s.getConfidence() >= threshold)
                 .toList();
+        if (filtered.size() < segments.size()) {
+            log.info("[STT] confidence 필터: {}/{} 세그먼트 제거 (임계값={})",
+                    segments.size() - filtered.size(), segments.size(), threshold);
+        }
+        return filtered;
     }
 }
