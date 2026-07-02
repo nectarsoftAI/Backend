@@ -16,6 +16,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import org.springframework.dao.DataIntegrityViolationException;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -99,22 +101,36 @@ public class LlmService {
             Meeting meeting = meetingRepo.findById(meetingId).orElse(null);
             if (meeting == null) return;
 
-            // 저장 직전 다시 조회 — 동시 요청으로 이미 INSERT된 경우 UPDATE로 처리
             Optional<MeetingSummary> latest = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
             MeetingSummary entity = latest.orElseGet(() ->
                     existing.orElseGet(() -> MeetingSummary.builder().meeting(meeting).build()));
 
-            entity.setLlmModel("gpt-4o");
-            entity.setProcessingStatus(SttProcessingStatus.COMPLETED);
-            entity.setKeyPoints(dto.getKeyPoints());
-            entity.setDecisions(dto.getDecisions());
-            entity.setActionItems(dto.getActionItems());
-            entity.setKeywords(dto.getKeywords());
-            entity.setProcessedAt(OffsetDateTime.now());
+            applyFields(entity, dto);
             meetingSummaryRepo.save(entity);
+        } catch (DataIntegrityViolationException e) {
+            // Python LLM 서버 콜백(POST /summary)이 동시에 INSERT한 경우 — 재조회 후 UPDATE
+            log.warn("[LLM] 중복 INSERT 감지, UPDATE 재시도 — meetingId={}", meetingId);
+            try {
+                MeetingSummary entity = meetingSummaryRepo.findByMeetingMeetingId(meetingId)
+                        .orElseThrow(() -> new IllegalStateException("재조회 실패"));
+                applyFields(entity, dto);
+                meetingSummaryRepo.save(entity);
+            } catch (Exception e2) {
+                log.error("[LLM] UPDATE 재시도 실패 — meetingId={}: {}", meetingId, e2.getMessage());
+            }
         } catch (Exception e) {
             log.error("[LLM] DB 저장 실패 — meetingId={}: {}", meetingId, e.getMessage());
         }
+    }
+
+    private void applyFields(MeetingSummary entity, TranscribeResponse.SummaryDto dto) {
+        entity.setLlmModel("gpt-4o");
+        entity.setProcessingStatus(SttProcessingStatus.COMPLETED);
+        entity.setKeyPoints(dto.getKeyPoints());
+        entity.setDecisions(dto.getDecisions());
+        entity.setActionItems(dto.getActionItems());
+        entity.setKeywords(dto.getKeywords());
+        entity.setProcessedAt(OffsetDateTime.now());
     }
 
     private TranscribeResponse.SummaryDto fromEntity(MeetingSummary entity) {
