@@ -99,8 +99,10 @@ public class LlmService {
             Meeting meeting = meetingRepo.findById(meetingId).orElse(null);
             if (meeting == null) return;
 
-            MeetingSummary entity = existing.orElseGet(() ->
-                    MeetingSummary.builder().meeting(meeting).build());
+            // 저장 직전 다시 조회 — 동시 요청으로 이미 INSERT된 경우 UPDATE로 처리
+            Optional<MeetingSummary> latest = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
+            MeetingSummary entity = latest.orElseGet(() ->
+                    existing.orElseGet(() -> MeetingSummary.builder().meeting(meeting).build()));
 
             entity.setLlmModel("gpt-4o");
             entity.setProcessingStatus(SttProcessingStatus.COMPLETED);

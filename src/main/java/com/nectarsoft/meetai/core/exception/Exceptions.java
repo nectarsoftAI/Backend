@@ -7,6 +7,13 @@ public final class Exceptions {
 
     private Exceptions() {}
 
+    // EX-001: 트랜스크립트 없음
+    public static class NoTranscriptError extends MeetAiException {
+        public NoTranscriptError(String detail) {
+            super("EX-001", "트랜스크립트가 없습니다: " + detail, HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+    }
+
     // EX-002: 무음 감지
     public static class SilenceDetectedError extends MeetAiException {
         public SilenceDetectedError(String detail) {
