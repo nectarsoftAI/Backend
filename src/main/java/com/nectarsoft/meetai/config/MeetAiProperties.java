@@ -55,6 +55,8 @@ public class MeetAiProperties {
         private int maxRetries = 3;
         private long retryBaseDelayMs = 1000L;
         private long retryMaxDelayMs = 8000L;
+        private boolean polishEnabled = false;
+        private String polishModel = "gpt-4o-mini";
     }
 
     @Data

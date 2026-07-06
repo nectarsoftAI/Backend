@@ -11,6 +11,7 @@ import com.nectarsoft.meetai.service.audio.AudioContext;
 import com.nectarsoft.meetai.service.audio.AudioService;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import com.nectarsoft.meetai.service.stt.SttService;
+import com.nectarsoft.meetai.service.stt.TranscriptPolishService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ public class SttController {
 
     private final AudioService audioService;
     private final SttService sttService;
+    private final TranscriptPolishService polishService;
     private final MeetingRepository meetingRepo;
     private final AudioFileRepository audioFileRepo;
     private final SttResultRepository sttResultRepo;
@@ -72,8 +74,8 @@ public class SttController {
                 .build();
         audioFileRepo.save(audioFile);
 
-        // STT 처리
-        List<RawSegment> segments = sttService.process(ctx.getWorkingPath());
+        // STT 처리 + OpenAI 후처리 (맞춤법, 어색한 표현 교정)
+        List<RawSegment> segments = polishService.polish(sttService.process(ctx.getWorkingPath()));
 
         // stt_results 저장
         SttResult sttResult = SttResult.builder()

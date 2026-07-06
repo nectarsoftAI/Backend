@@ -21,6 +21,8 @@ meetai:
     max-retries: 3
     retry-base-delay-ms: 1000
     retry-max-delay-ms: 8000
+    polish-enabled: true
+    polish-model: gpt-4o-mini
 
   openai:
     api-key: ${OPENAI_API_KEY}
@@ -40,6 +42,7 @@ meetai:
     chunk-min-duration-sec: 0.5
     chunk-max-silence-ratio: 0.7
     chunk-expected-sample-rate: 16000
+
 
 # ── Database ─────────────────────────────────────────────────────────
 # Railway: SPRING_DATASOURCE_URL 환경변수로 PostgreSQL(Supabase) 연결

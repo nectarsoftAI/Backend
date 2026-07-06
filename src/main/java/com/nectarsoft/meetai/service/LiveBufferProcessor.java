@@ -8,6 +8,7 @@ import com.nectarsoft.meetai.repository.SttResultRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
 import com.nectarsoft.meetai.service.stt.RawSegment;
 import com.nectarsoft.meetai.service.stt.SttService;
+import com.nectarsoft.meetai.service.stt.TranscriptPolishService;
 import com.nectarsoft.meetai.storage.FileStorage;
 import com.nectarsoft.meetai.service.LlmService;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ import java.util.UUID;
 public class LiveBufferProcessor {
 
     private final SttService sttService;
+    private final TranscriptPolishService polishService;
     private final WebSocketManager wsManager;
     private final FileStorage fileStorage;
     private final MeetingRepository meetingRepo;
@@ -92,15 +94,35 @@ public class LiveBufferProcessor {
             log.info("[Live] 브로드캐스트 완료 — {} 구간", segments.size());
 
             if (isFinal) {
-                int savedCount = 0;
-                if (meeting != null) {
-                    savedCount = transcriptRepo
-                            .findByMeetingMeetingIdOrderByStartSecAsc(UUID.fromString(sessionId))
-                            .size();
+                UUID mid = UUID.fromString(sessionId);
+                List<Transcript> all = transcriptRepo
+                        .findByMeetingMeetingIdOrderByStartSecAsc(mid);
+
+                if (!all.isEmpty()) {
+                    // 전체 세그먼트를 OpenAI로 일괄 후처리 후 DB 업데이트
+                    List<RawSegment> raw = all.stream()
+                            .map(t -> RawSegment.builder()
+                                    .speakerId(t.getSpeakerLabel())
+                                    .startSec(t.getStartSec())
+                                    .endSec(t.getEndSec())
+                                    .text(t.getContent())
+                                    .confidence(1.0)
+                                    .lowConfidence(false)
+                                    .build())
+                            .toList();
+
+                    List<RawSegment> polished = polishService.polish(raw);
+
+                    for (int i = 0; i < all.size(); i++) {
+                        all.get(i).setContent(polished.get(i).getText());
+                    }
+                    transcriptRepo.saveAll(all);
+                    log.info("[Live] 세션 종료 후처리 완료 — meetingId={}, count={}", mid, all.size());
                 }
+
                 // 요약은 프론트가 POST /summarize 를 직접 호출하므로 여기서 중복 트리거하지 않음
                 wsManager.broadcast(sessionId, objectMapper.writeValueAsString(
-                        Map.of("type", "session_ended", "transcript_count", savedCount)));
+                        Map.of("type", "session_ended", "transcript_count", all.size())));
                 wsManager.closeAll(sessionId);
             }
 
