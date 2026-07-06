@@ -6,6 +6,8 @@ import com.nectarsoft.meetai.core.websocket.OnlineRoomManager;
 import com.nectarsoft.meetai.model.*;
 import com.nectarsoft.meetai.repository.MeetingParticipantRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
+import com.nectarsoft.meetai.repository.TranscriptRepository;
+import com.nectarsoft.meetai.service.LlmService;
 import com.nectarsoft.meetai.service.OnlineBufferProcessor;
 import com.nectarsoft.meetai.service.SessionBuffer;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,8 @@ import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
 import java.nio.ByteBuffer;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,6 +30,8 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
     private final OnlineRoomManager roomManager;
     private final MeetingRepository meetingRepo;
     private final MeetingParticipantRepository participantRepo;
+    private final TranscriptRepository transcriptRepo;
+    private final LlmService llmService;
     private final OnlineBufferProcessor bufferProcessor;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -205,16 +211,26 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private void endMeeting(String meetingId) {
-        meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
-            if (m.getStatus() == MeetingStatus.COMPLETED) return;
-            m.setStatus(MeetingStatus.COMPLETED);
-            meetingRepo.save(m);
-        });
+        UUID mid = UUID.fromString(meetingId);
+        Meeting meeting = meetingRepo.findById(mid).orElse(null);
+        if (meeting == null || meeting.getStatus() == MeetingStatus.COMPLETED) return;
+
+        if (meeting.getMeetingDate() != null) {
+            meeting.setDurationSeconds((int) ChronoUnit.SECONDS.between(meeting.getMeetingDate(), OffsetDateTime.now()));
+        }
+        meeting.setStatus(MeetingStatus.COMPLETED);
+        meetingRepo.save(meeting);
+
         try {
             roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "meeting_ended")));
         } catch (Exception ignored) {}
         roomManager.closeAll(meetingId);
-        log.info("[OnlineWS] 회의 종료 — meetingId={}", meetingId);
+        log.info("[OnlineWS] 회의 종료 — meetingId={}, duration={}s", meetingId, meeting.getDurationSeconds());
+
+        List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(mid);
+        if (!transcripts.isEmpty()) {
+            llmService.summarizeAsync(mid, transcripts);
+        }
     }
 
     private boolean isAdmin(String meetingId, String profileId) {
