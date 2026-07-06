@@ -36,6 +36,11 @@ public class OnlineRoomManager {
         return room != null ? room.keySet() : Set.of();
     }
 
+    public boolean isInRoom(String meetingId, String profileId) {
+        ConcurrentHashMap<String, WebSocketSession> room = rooms.get(meetingId);
+        return room != null && room.containsKey(profileId);
+    }
+
     public void broadcast(String meetingId, String json) {
         ConcurrentHashMap<String, WebSocketSession> room = rooms.getOrDefault(meetingId, new ConcurrentHashMap<>());
         for (WebSocketSession ws : room.values()) {

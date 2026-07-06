@@ -17,17 +17,23 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
 
+    private static final int ADMIN_GRACE_SECONDS = 30;
+
     private final OnlineRoomManager roomManager;
     private final MeetingRepository meetingRepo;
     private final MeetingParticipantRepository participantRepo;
     private final OnlineBufferProcessor bufferProcessor;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ScheduledExecutorService graceScheduler = Executors.newScheduledThreadPool(2);
 
     // "meetingId:profileId" → 참여자별 오디오 버퍼
     private final ConcurrentHashMap<String, SessionBuffer> audioBuffers = new ConcurrentHashMap<>();
@@ -152,13 +158,7 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
             // 회의 종료 (ADMIN 전용)
             case "end_meeting" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }
-                meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
-                    m.setStatus(MeetingStatus.COMPLETED);
-                    meetingRepo.save(m);
-                });
-                roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "meeting_ended")));
-                roomManager.closeAll(meetingId);
-                log.info("[OnlineWS] 회의 종료 — meetingId={}", meetingId);
+                endMeeting(meetingId);
             }
 
             // 강퇴 (ADMIN 전용)
@@ -197,11 +197,37 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         } catch (Exception ignored) {}
 
         log.info("[OnlineWS] 연결 종료 — meetingId={}, profileId={}, status={}", meetingId, profileId, status);
+
+        // 방장이 비정상 종료된 경우 grace period 후 자동 종료
+        if (status.getCode() != CloseStatus.NORMAL.getCode() && isAdmin(meetingId, profileId)) {
+            log.info("[OnlineWS] 방장 비정상 종료 — {}초 후 재접속 없으면 회의 자동 종료 meetingId={}", ADMIN_GRACE_SECONDS, meetingId);
+            graceScheduler.schedule(() -> {
+                if (!roomManager.isInRoom(meetingId, profileId)) {
+                    log.info("[OnlineWS] 방장 미복귀 — 회의 자동 종료 meetingId={}", meetingId);
+                    endMeeting(meetingId);
+                } else {
+                    log.info("[OnlineWS] 방장 재접속 확인 — 자동 종료 취소 meetingId={}", meetingId);
+                }
+            }, ADMIN_GRACE_SECONDS, TimeUnit.SECONDS);
+        }
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable ex) {
         log.error("[OnlineWS] 전송 오류 — meetingId={}: {}", attr(session, "meetingId"), ex.getMessage());
+    }
+
+    private void endMeeting(String meetingId) {
+        meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
+            if (m.getStatus() == MeetingStatus.COMPLETED) return;
+            m.setStatus(MeetingStatus.COMPLETED);
+            meetingRepo.save(m);
+        });
+        try {
+            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "meeting_ended")));
+        } catch (Exception ignored) {}
+        roomManager.closeAll(meetingId);
+        log.info("[OnlineWS] 회의 종료 — meetingId={}", meetingId);
     }
 
     private boolean isAdmin(String meetingId, String profileId) {
