@@ -17,23 +17,17 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
 
-    private static final int ADMIN_GRACE_SECONDS = 30;
-
     private final OnlineRoomManager roomManager;
     private final MeetingRepository meetingRepo;
     private final MeetingParticipantRepository participantRepo;
     private final OnlineBufferProcessor bufferProcessor;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ScheduledExecutorService graceScheduler = Executors.newScheduledThreadPool(2);
 
     // "meetingId:profileId" → 참여자별 오디오 버퍼
     private final ConcurrentHashMap<String, SessionBuffer> audioBuffers = new ConcurrentHashMap<>();
@@ -198,17 +192,10 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
 
         log.info("[OnlineWS] 연결 종료 — meetingId={}, profileId={}, status={}", meetingId, profileId, status);
 
-        // 방장이 비정상 종료된 경우 grace period 후 자동 종료
-        if (status.getCode() != CloseStatus.NORMAL.getCode() && isAdmin(meetingId, profileId)) {
-            log.info("[OnlineWS] 방장 비정상 종료 — {}초 후 재접속 없으면 회의 자동 종료 meetingId={}", ADMIN_GRACE_SECONDS, meetingId);
-            graceScheduler.schedule(() -> {
-                if (!roomManager.isInRoom(meetingId, profileId)) {
-                    log.info("[OnlineWS] 방장 미복귀 — 회의 자동 종료 meetingId={}", meetingId);
-                    endMeeting(meetingId);
-                } else {
-                    log.info("[OnlineWS] 방장 재접속 확인 — 자동 종료 취소 meetingId={}", meetingId);
-                }
-            }, ADMIN_GRACE_SECONDS, TimeUnit.SECONDS);
+        // 방에 아무도 없으면 회의 자동 종료
+        if (roomManager.getProfileIds(meetingId).isEmpty()) {
+            log.info("[OnlineWS] 모든 참여자 퇴장 — 회의 자동 종료 meetingId={}", meetingId);
+            endMeeting(meetingId);
         }
     }
 
