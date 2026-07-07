@@ -7,9 +7,8 @@ import com.nectarsoft.meetai.model.*;
 import com.nectarsoft.meetai.repository.MeetingParticipantRepository;
 import com.nectarsoft.meetai.repository.MeetingRepository;
 import com.nectarsoft.meetai.repository.TranscriptRepository;
+import com.nectarsoft.meetai.service.AssemblyAiStreamingManager;
 import com.nectarsoft.meetai.service.LlmService;
-import com.nectarsoft.meetai.service.OnlineBufferProcessor;
-import com.nectarsoft.meetai.service.SessionBuffer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,7 +19,6 @@ import java.nio.ByteBuffer;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -32,11 +30,8 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
     private final MeetingParticipantRepository participantRepo;
     private final TranscriptRepository transcriptRepo;
     private final LlmService llmService;
-    private final OnlineBufferProcessor bufferProcessor;
+    private final AssemblyAiStreamingManager streamingManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
-
-    // "meetingId:profileId" → 참여자별 오디오 버퍼
-    private final ConcurrentHashMap<String, SessionBuffer> audioBuffers = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -55,7 +50,6 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
-        // ADMIN: 회의 생성자 UUID로 판단 (DB 조회 불필요)
         UUID pId = UUID.fromString(profileId);
         boolean isAdmin = pId.equals(meeting.getUserId());
 
@@ -68,11 +62,9 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         session.setBinaryMessageSizeLimit(10 * 1024 * 1024);
         session.setTextMessageSizeLimit(64 * 1024);
 
-        // 세션에 role 저장 (이후 권한 체크에 사용)
         String role = isAdmin ? "ADMIN" : "GUEST";
         session.getAttributes().put("role", role);
 
-        // GUEST 첫 입장 시 DB 등록 (실패해도 WS 연결은 유지)
         if (!isAdmin) {
             try {
                 if (!participantRepo.existsByMeetingMeetingIdAndProfileId(UUID.fromString(meetingId), pId)) {
@@ -94,7 +86,6 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
                 "role", role
         )));
 
-        // 신규 참여자에게 room_info 전송
         synchronized (session) {
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
                     "type", "room_info",
@@ -113,16 +104,11 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         if (meetingId == null || profileId == null) return;
 
         ByteBuffer payload = message.getPayload();
-        byte[] data = new byte[payload.remaining()];
-        payload.get(data);
+        byte[] pcm = new byte[payload.remaining()];
+        payload.get(pcm);
 
-        String bufferKey = meetingId + ":" + profileId;
-        SessionBuffer buffer = audioBuffers.computeIfAbsent(bufferKey, k -> new SessionBuffer());
-        buffer.addChunk(data);
-
-        if (buffer.shouldProcess()) {
-            bufferProcessor.process(meetingId, profileId, profileId, buffer);
-        }
+        // PCM → AssemblyAI 실시간 스트리밍 (세션 없으면 자동 생성)
+        streamingManager.sendAudio(meetingId, profileId, pcm);
     }
 
     @Override
@@ -136,15 +122,6 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         if (type == null) return;
 
         switch (type) {
-            // WebRTC 시그널링 — 대상에게 중계
-            case "offer", "answer", "ice_candidate" -> {
-                String to = (String) msg.get("to");
-                if (to == null) return;
-                msg.put("from", profileId);
-                roomManager.sendToOne(meetingId, to, objectMapper.writeValueAsString(msg));
-            }
-
-            // 회의 시작 (ADMIN 전용)
             case "start_meeting" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }
                 meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
@@ -154,14 +131,10 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
                 roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "meeting_started")));
                 log.info("[OnlineWS] 회의 시작 — meetingId={}", meetingId);
             }
-
-            // 회의 종료 (ADMIN 전용)
             case "end_meeting" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }
                 endMeeting(meetingId);
             }
-
-            // 강퇴 (ADMIN 전용)
             case "kick" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }
                 String target = (String) msg.get("profileId");
@@ -173,7 +146,6 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
                         objectMapper.writeValueAsString(Map.of("type", "participant_left", "profileId", target)));
                 log.info("[OnlineWS] 강퇴 — meetingId={}, target={}", meetingId, target);
             }
-
             default -> log.debug("[OnlineWS] 알 수 없는 타입: {}", type);
         }
     }
@@ -184,11 +156,8 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         String profileId = attr(session, "profileId");
         if (meetingId == null || profileId == null) return;
 
-        // 남은 오디오 버퍼 처리
-        SessionBuffer buffer = audioBuffers.remove(meetingId + ":" + profileId);
-        if (buffer != null && buffer.hasInit()) {
-            bufferProcessor.process(meetingId, profileId, profileId, buffer);
-        }
+        // AssemblyAI 스트리밍 세션 종료
+        streamingManager.endSession(meetingId, profileId);
 
         roomManager.leave(meetingId, profileId);
         try {
@@ -198,7 +167,6 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
 
         log.info("[OnlineWS] 연결 종료 — meetingId={}, profileId={}, status={}", meetingId, profileId, status);
 
-        // 방에 아무도 없으면 회의 자동 종료
         if (roomManager.getProfileIds(meetingId).isEmpty()) {
             log.info("[OnlineWS] 모든 참여자 퇴장 — 회의 자동 종료 meetingId={}", meetingId);
             endMeeting(meetingId);
@@ -221,6 +189,9 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         meeting.setStatus(MeetingStatus.COMPLETED);
         meetingRepo.save(meeting);
 
+        // 모든 참여자의 AssemblyAI 스트리밍 세션 종료
+        streamingManager.endAllSessions(meetingId);
+
         try {
             roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "meeting_ended")));
         } catch (Exception ignored) {}
@@ -228,9 +199,7 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         log.info("[OnlineWS] 회의 종료 — meetingId={}, duration={}s", meetingId, meeting.getDurationSeconds());
 
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(mid);
-        if (!transcripts.isEmpty()) {
-            llmService.summarizeAsync(mid, transcripts);
-        }
+        if (!transcripts.isEmpty()) llmService.summarizeAsync(mid, transcripts);
     }
 
     private boolean isAdmin(String meetingId, String profileId) {

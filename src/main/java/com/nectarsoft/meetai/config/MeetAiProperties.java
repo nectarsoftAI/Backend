@@ -19,6 +19,7 @@ public class MeetAiProperties {
     private Diarization diarization = new Diarization();
     private Live live = new Live();
     private Llm llm = new Llm();
+    private LiveKit livekit = new LiveKit();
 
     @Data
     public static class Llm {
@@ -84,5 +85,12 @@ public class MeetAiProperties {
         private double chunkMinDurationSec = 0.5;
         private double chunkMaxSilenceRatio = 0.7;
         private int chunkExpectedSampleRate = 16000;
+    }
+
+    @Data
+    public static class LiveKit {
+        private String apiKey = "";
+        private String apiSecret = "";
+        private String url = "";
     }
 }

@@ -9,19 +9,19 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 라이브 세션별 오디오 버퍼
- * - 첫 번째 청크의 WebM 초기화 세그먼트(EBML 헤더~Tracks)만 initSegment로 보관
- * - 첫 청크에 함께 실려온 첫 Cluster(첫 발화 오디오)는 일반 청크로 취급
- * - 이후 청크는 pendingChunks에 누적
- * - 30초 or 500KB 초과 시 처리 트리거
+ * 온라인 세션별 PCM 오디오 버퍼
+ * - 프론트에서 AudioWorklet → Int16 PCM 청크로 전송
+ * - 5초 or 500KB 누적 시 STT 트리거
+ * - 각 청크가 독립적(WAV 헤더는 OnlineBufferProcessor에서 조립)
  */
 @Slf4j
 public class SessionBuffer {
 
-    private static final long PROCESS_INTERVAL_MS = 5_000L; // 5초
-    private static final long MAX_PENDING_BYTES   = 500_000L; // ~500KB
+    private static final long PROCESS_INTERVAL_MS = 5_000L;
+    private static final long MAX_PENDING_BYTES   = 500_000L;
 
-    private byte[] initSegment = null;
+    // PCM 청크가 하나라도 있으면 처리 가능 상태
+    private boolean initialized = false;
     private final List<byte[]> pendingChunks = new ArrayList<>();
     private long pendingSize = 0;
     private long lastProcessedMs = System.currentTimeMillis();
@@ -30,6 +30,10 @@ public class SessionBuffer {
     private static final byte[] CLUSTER_ID = {(byte) 0x1F, (byte) 0x43, (byte) 0xB6, (byte) 0x75};
 
     public synchronized void addChunk(byte[] data) {
+        initialized = true;
+        pendingChunks.add(data);
+        pendingSize += data.length;
+        log.debug("[Buffer] PCM 청크 추가 — {}bytes (누적 {}bytes)", data.length, pendingSize);
         if (initSegment == null) {
             // 첫 청크 = [초기화 세그먼트(헤더~Tracks)] + [첫 Cluster(첫 발화 오디오)]
             // 헤더 부분만 initSegment로 분리 저장하고, 첫 Cluster는 일반 청크로 취급해야
@@ -69,21 +73,14 @@ public class SessionBuffer {
     }
 
     public synchronized boolean shouldProcess() {
-        if (initSegment == null || pendingChunks.isEmpty()) return false;
+        if (!initialized || pendingChunks.isEmpty()) return false;
         long elapsed = System.currentTimeMillis() - lastProcessedMs;
         return elapsed >= PROCESS_INTERVAL_MS || pendingSize >= MAX_PENDING_BYTES;
     }
 
-    /**
-     * initSegment + pendingChunks 를 하나의 WebM 바이트 배열로 합쳐 반환
-     * 호출 후 pendingChunks 초기화
-     */
     public synchronized byte[] drainAndBuild() throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(initSegment);
-        for (byte[] chunk : pendingChunks) {
-            out.write(chunk);
-        }
+        for (byte[] chunk : pendingChunks) out.write(chunk);
         pendingChunks.clear();
         pendingSize = 0;
         lastProcessedMs = System.currentTimeMillis();
@@ -91,6 +88,6 @@ public class SessionBuffer {
     }
 
     public synchronized boolean hasInit() {
-        return initSegment != null;
+        return initialized;
     }
 }
