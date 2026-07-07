@@ -136,14 +136,6 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         if (type == null) return;
 
         switch (type) {
-            // WebRTC 시그널링 — 대상에게 중계
-            case "offer", "answer", "ice_candidate" -> {
-                String to = (String) msg.get("to");
-                if (to == null) return;
-                msg.put("from", profileId);
-                roomManager.sendToOne(meetingId, to, objectMapper.writeValueAsString(msg));
-            }
-
             // 회의 시작 (ADMIN 전용)
             case "start_meeting" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }

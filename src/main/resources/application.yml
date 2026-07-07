@@ -34,6 +34,11 @@ meetai:
     language-code: ko
     speakers-expected: 2
 
+  livekit:
+    api-key: ${LIVEKIT_API_KEY:}
+    api-secret: ${LIVEKIT_API_SECRET:}
+    url: ${LIVEKIT_URL:}
+
   diarization:
     min-speakers: 1
     max-speakers: 10

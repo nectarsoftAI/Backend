@@ -15,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -44,11 +46,13 @@ public class OnlineBufferProcessor {
                     .map(p -> p.getDisplayName() != null ? p.getDisplayName() : profileId.substring(0, 8))
                     .orElse(profileId.substring(0, 8));
 
-            byte[] audioData = buffer.drainAndBuild();
-            log.info("[OnlineSTT] 처리 — meetingId={}, profileId={}, bytes={}", meetingId, profileId, audioData.length);
+            byte[] pcmData = buffer.drainAndBuild();
+            log.info("[OnlineSTT] 처리 — meetingId={}, profileId={}, bytes={}", meetingId, profileId, pcmData.length);
 
-            String filename = "online_" + meetingId + "_" + profileId + "_" + System.nanoTime() + ".webm";
-            Path tmpFile = fileStorage.saveTempBytes(filename, audioData);
+            // PCM Int16(16kHz mono) → WAV 파일로 조립
+            byte[] wavData = buildWav(pcmData, 16000, 1, 16);
+            String filename = "online_" + meetingId + "_" + profileId + "_" + System.nanoTime() + ".wav";
+            Path tmpFile = fileStorage.saveTempBytes(filename, wavData);
             List<RawSegment> segments = sttService.process(tmpFile);
             fileStorage.delete(tmpFile);
 
@@ -91,5 +95,28 @@ public class OnlineBufferProcessor {
         } catch (Exception e) {
             log.error("[OnlineSTT] 처리 실패 — meetingId={}, profileId={}: {}", meetingId, profileId, e.getMessage());
         }
+    }
+
+    private byte[] buildWav(byte[] pcm, int sampleRate, int channels, int bitsPerSample) {
+        int byteRate = sampleRate * channels * bitsPerSample / 8;
+        int blockAlign = channels * bitsPerSample / 8;
+        ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        header.put(new byte[]{'R','I','F','F'});
+        header.putInt(36 + pcm.length);
+        header.put(new byte[]{'W','A','V','E'});
+        header.put(new byte[]{'f','m','t',' '});
+        header.putInt(16);
+        header.putShort((short) 1);           // PCM
+        header.putShort((short) channels);
+        header.putInt(sampleRate);
+        header.putInt(byteRate);
+        header.putShort((short) blockAlign);
+        header.putShort((short) bitsPerSample);
+        header.put(new byte[]{'d','a','t','a'});
+        header.putInt(pcm.length);
+        byte[] result = new byte[44 + pcm.length];
+        System.arraycopy(header.array(), 0, result, 0, 44);
+        System.arraycopy(pcm, 0, result, 44, pcm.length);
+        return result;
     }
 }
