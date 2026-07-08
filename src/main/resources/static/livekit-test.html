@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MeetAI LiveKit 통합 테스트</title>
-<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@1/dist/livekit-client.umd.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', sans-serif; background: #111827; color: #f3f4f6; min-height: 100vh; }
@@ -332,10 +332,13 @@ async function connectLiveKit() {
 
     // 리모트 참여자 오디오 구독
     room.on(LK.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      log(`[LiveKit] 트랙 구독 — ${participant.identity} kind=${track.kind}`);
       if (track.kind === LK.Track.Kind.Audio) {
         const el = track.attach();
+        el.autoplay = true;
         document.getElementById('audioContainer').appendChild(el);
-        log(`[LiveKit] 오디오 구독 — ${participant.identity}`);
+        el.play().catch(err => log(`[LiveKit] 오디오 재생 오류: ${err.message}`, 'warn'));
+        log(`[LiveKit] 오디오 연결 완료 — ${participant.identity}`);
       }
     });
 
@@ -378,10 +381,14 @@ async function connectLiveKit() {
     room.remoteParticipants.forEach((p) => {
       lkParticipants[p.identity] = p;
       addLkTile(p.identity, false);
+      log(`[LiveKit] 기존 참여자 — ${p.identity}`);
       p.audioTrackPublications.forEach(pub => {
         if (pub.track) {
           const el = pub.track.attach();
+          el.autoplay = true;
           document.getElementById('audioContainer').appendChild(el);
+          el.play().catch(err => log(`[LiveKit] 오디오 재생 오류: ${err.message}`, 'warn'));
+          log(`[LiveKit] 기존 오디오 연결 — ${p.identity}`);
         }
       });
     });
@@ -547,7 +554,8 @@ function strColor(s) {
 // ── 초기화 (모든 함수 선언 이후 실행) ────────────────────────────
 window.addEventListener('DOMContentLoaded', function () {
   LK = window.LivekitClient;
-  if (!LK) console.warn('[LiveKit] CDN 로드 실패 — window.LivekitClient 없음');
+  if (!LK) { console.warn('[LiveKit] CDN 로드 실패 — window.LivekitClient 없음'); }
+  else { console.info('[LiveKit] SDK 로드 완료 — version:', LK.version || '(v1)'); }
 
   // ── 버튼 이벤트 바인딩 ────────────────────────────────────────
   document.getElementById('loginBtn').addEventListener('click', login);
