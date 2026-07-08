@@ -67,7 +67,11 @@ public class LiveWebSocketHandler extends AbstractWebSocketHandler {
         payload.get(pcm);
 
         log.debug("[LiveWS] PCM 수신 — meetingId={}, bytes={}", meetingId, pcm.length);
-        streamingManager.sendAudio(meetingId, profileId, pcm);
+        try {
+            streamingManager.sendAudio(meetingId, profileId, pcm);
+        } catch (Exception e) {
+            log.error("[LiveWS] 오디오 스트리밍 오류 — meetingId={}: {}", meetingId, e.getMessage());
+        }
     }
 
     @Override

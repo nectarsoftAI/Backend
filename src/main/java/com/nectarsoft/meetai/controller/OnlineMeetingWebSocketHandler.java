@@ -110,8 +110,12 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         byte[] pcm = new byte[payload.remaining()];
         payload.get(pcm);
 
-        // PCM → AssemblyAI 실시간 스트리밍 (세션 없으면 자동 생성)
-        streamingManager.sendAudio(meetingId, profileId, pcm);
+        try {
+            streamingManager.sendAudio(meetingId, profileId, pcm);
+        } catch (Exception e) {
+            log.error("[OnlineWS] 오디오 스트리밍 오류 — meetingId={}, profileId={}: {}", meetingId, profileId, e.getMessage());
+            // 예외를 전파하지 않음 → 1011 비정상 종료 방지
+        }
     }
 
     @Override
@@ -176,17 +180,18 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
 
         log.info("[OnlineWS] 연결 종료 — meetingId={}, profileId={}, status={}", meetingId, profileId, status);
 
-        // 게스트가 모두 퇴장하면 회의 종료 (방장 연결 여부는 무관)
-        // 방장이 네트워크 문제로 끊겨도 게스트가 남아 있으면 회의는 계속됨
+        // 정상 종료는 end_meeting 이벤트만 담당 — 여기서는 비정상 종료(네트워크 단절 등) 처리
+        // 마지막 참여자까지 모두 빠졌을 때 LIVE 상태 그대로 두면 안 되니 FAILED로 마감
         meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
-            if (m.getStatus() == MeetingStatus.COMPLETED) return;
-            String adminId = m.getUserId().toString();
-            boolean guestsRemain = roomManager.getProfileIds(meetingId)
-                    .stream().anyMatch(p -> !p.equals(adminId));
-            if (!guestsRemain) {
-                log.info("[OnlineWS] 모든 게스트 퇴장 — 회의 종료, meetingId={}", meetingId);
-                endMeeting(meetingId);
+            if (m.getStatus() == MeetingStatus.COMPLETED || m.getStatus() == MeetingStatus.FAILED) return;
+            if (!roomManager.getProfileIds(meetingId).isEmpty()) return;
+            streamingManager.endAllSessions(meetingId);
+            if (m.getMeetingDate() != null) {
+                m.setDurationSeconds((int) ChronoUnit.SECONDS.between(m.getMeetingDate(), OffsetDateTime.now()));
             }
+            m.setStatus(MeetingStatus.FAILED);
+            meetingRepo.save(m);
+            log.warn("[OnlineWS] 비정상 종료 — 모든 참여자 이탈, meetingId={}", meetingId);
         });
     }
 
