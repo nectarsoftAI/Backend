@@ -45,7 +45,7 @@ public class LiveKitTokenController {
             return ResponseEntity.status(403).build();
         }
 
-        String jwt = buildLiveKitToken(meetingId, profileId, isAdmin);
+        String jwt = buildLiveKitToken(meetingId, profileId, true);
         log.info("[LiveKit] 토큰 발급 — meetingId={}, profileId={}, isAdmin={}", meetingId, profileId, isAdmin);
         return ResponseEntity.ok(Map.of(
                 "token", jwt,
