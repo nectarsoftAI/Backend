@@ -30,6 +30,7 @@ meetai:
     whisper-language: ko
     # 실시간(말하는 중) 자막 — OpenAI Realtime API
     realtime-model: ${OPENAI_REALTIME_MODEL:gpt-4o-transcribe}
+    realtime-enabled: ${OPENAI_REALTIME_ENABLED:false}
 
   assemblyai:
     api-key: ${ASSEMBLYAI_API_KEY:}

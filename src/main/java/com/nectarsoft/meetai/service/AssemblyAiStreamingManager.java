@@ -76,8 +76,8 @@ public class AssemblyAiStreamingManager {
             throw new IllegalStateException("OPENAI_API_KEY not configured");
         }
 
-        // OpenAI Realtime (말하는 중 자막) 우선, 연결 실패 시 Whisper 배치 폴백
-        try {
+        // OpenAI Realtime (말하는 중 자막) — realtime-enabled=true일 때만 시도, 실패 시 Whisper 배치 폴백
+        if (props.getOpenai().isRealtimeEnabled()) try {
             RealtimeSttSession session = new RealtimeSttSession(
                     apiKey,
                     props.getOpenai().getRealtimeModel(),

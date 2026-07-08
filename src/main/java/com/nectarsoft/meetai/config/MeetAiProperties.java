@@ -66,6 +66,8 @@ public class MeetAiProperties {
         private String whisperLanguage = "ko";
         // Realtime API 실시간 자막용 (gpt-4o-transcribe | gpt-4o-mini-transcribe)
         private String realtimeModel = "gpt-4o-transcribe";
+        // Realtime 프로토콜 검증 완료 전까지 기본 비활성 — Whisper 배치(검증됨) 사용
+        private boolean realtimeEnabled = false;
     }
 
     @Data
