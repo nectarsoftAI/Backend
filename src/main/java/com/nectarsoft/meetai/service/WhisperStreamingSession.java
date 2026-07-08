@@ -11,6 +11,7 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.*;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
@@ -19,7 +20,9 @@ import java.util.regex.Pattern;
 
 /**
  * OpenAI Whisper 기반 음성 인식 세션
- * - PCM 오디오를 5초 단위로 누적 후 Whisper API에 일괄 전송
+ * - webm/ogg 청크 → 클러스터 경계 복원 → ffmpeg 디코딩(16kHz PCM)
+ * - 에너지 VAD로 발화(utterance) 단위 분리: 무음 구간은 Whisper 호출 자체를 차단 (환각 원천 방지 + 비용 절감)
+ * - ffmpeg 없는 환경에서는 컨테이너 직접 전송 + no_speech_prob 등 메타데이터 필터로 폴백
  * - 한국어(ko) 지원
  */
 @Slf4j
@@ -29,8 +32,15 @@ public class WhisperStreamingSession {
 
     private static final int FLUSH_INTERVAL_SEC = 5;
     private static final int SAMPLE_RATE = 16000;
-    // 최소 1초치 오디오 미만이면 전송 생략 (노이즈/무음 방지)
-    private static final int MIN_BUFFER_BYTES = SAMPLE_RATE * 2;
+
+    // ── 에너지 기반 VAD ────────────────────────────────────────────
+    // 역할 분리: VAD = 무음 구간 Whisper 호출 원천 차단(환각 방지), no_speech_prob 필터 = 인식 민감도
+    private static final int FRAME_BYTES = 960;                          // 30ms @ 16kHz 16-bit mono
+    private static final int VAD_RMS_THRESHOLD = 500;                    // 무음 판정 RMS 경계 (0~32767)
+    private static final int SILENCE_END_FRAMES = 24;                    // 720ms 침묵 → 발화 종료
+    private static final int MIN_VOICED_FRAMES = 8;                      // 240ms 미만 발화는 잡음으로 폐기
+    private static final int MAX_UTTERANCE_BYTES = 25 * SAMPLE_RATE * 2; // 발화 최대 25초 (강제 분할)
+    private static final int PRE_ROLL_FRAMES = 5;                        // 발화 시작 전 150ms 포함 (첫 음절 보존)
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -59,7 +69,6 @@ public class WhisperStreamingSession {
         return new RestTemplate(factory);
     }
 
-    private final ByteArrayOutputStream audioBuffer = new ByteArrayOutputStream();
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "whisper-flush");
@@ -67,7 +76,15 @@ public class WhisperStreamingSession {
                 return t;
             });
     private volatile boolean closed = false;
-    private long bufferStartMs;
+
+    // ── VAD/발화 상태 (whisper-flush 단일 스레드에서만 접근) ──────
+    private final ByteArrayOutputStream frameRemainder = new ByteArrayOutputStream();
+    private final ArrayDeque<byte[]> preRoll = new ArrayDeque<>();
+    private final ByteArrayOutputStream utteranceBuf = new ByteArrayOutputStream();
+    private boolean inUtterance = false;
+    private int silentFrames = 0;
+    private int voicedFrames = 0;
+    private volatile long lastAudioMs = System.currentTimeMillis();
 
     public WhisperStreamingSession(String apiKey, String model, String language,
                                    long sessionOffsetMs, Consumer<Transcript> onFinal) {
@@ -77,41 +94,186 @@ public class WhisperStreamingSession {
         this.meetingStartMs = System.currentTimeMillis() - sessionOffsetMs;
         this.onFinal = onFinal;
         this.restTemplate = buildRestTemplate();
-        this.bufferStartMs = System.currentTimeMillis();
         scheduler.scheduleAtFixedRate(this::flush, FLUSH_INTERVAL_SEC, FLUSH_INTERVAL_SEC, TimeUnit.SECONDS);
-        log.info("[Whisper] 세션 시작 — offsetMs={}", sessionOffsetMs);
+        log.info("[Whisper] 세션 시작 — offsetMs={}, ffmpeg={}", sessionOffsetMs, FfmpegPcmDecoder.isAvailable());
     }
 
-    // MediaRecorder timeslice 연속 청크 복원용: 첫 webm 청크의 init segment(EBML 헤더+Tracks) 캐시
+    // MediaRecorder timeslice 연속 청크 복원용: 첫 webm 청크의 init segment(EBML 헤더+Tracks)만 캐시
+    // 주의: 첫 청크 전체를 init으로 쓰면 그 안의 실제 음성이 매 세그먼트마다 반복 변환됨
     private volatile byte[] webmInit;
+    private volatile boolean webmMode = false;
+    // 미처리 클러스터 누적 버퍼 — flush 시 클러스터 경계에 맞춰 잘라 init과 결합
+    private final ByteArrayOutputStream webmClusterBuf = new ByteArrayOutputStream();
 
     public void sendAudio(byte[] data) {
         if (closed) return;
         long endMs = System.currentTimeMillis();
 
-        // 헤더 있는 webm 청크 — init segment 추출 후 즉시 변환
+        // 헤더 있는 webm 청크 — 진짜 헤더(첫 Cluster 이전)만 init으로 저장하고
+        // 첫 Cluster부터는 일반 청크로 누적 (첫 발화 반복 방지)
         if (isWebm(data)) {
-            byte[] init = extractWebmInit(data);
-            if (init != null) webmInit = init;
-            scheduler.execute(() -> transcribeSegment(data, endMs));
+            webmMode = true;
+            int clusterPos = indexOfCluster(data, 0);
+            if (clusterPos > 0) {
+                if (webmInit == null) {
+                    byte[] init = new byte[clusterPos];
+                    System.arraycopy(data, 0, init, 0, clusterPos);
+                    webmInit = init;
+                }
+                synchronized (webmClusterBuf) {
+                    webmClusterBuf.write(data, clusterPos, data.length - clusterPos);
+                }
+            } else {
+                // Cluster 경계를 못 찾으면 기존 방식으로 안전 폴백: 자체 완결 파일로 처리
+                log.warn("[Whisper] webm 헤더 청크에서 Cluster 경계 미발견 — 단독 변환 폴백 ({}바이트)", data.length);
+                scheduler.execute(() -> decodeAndProcess(data, endMs));
+            }
             return;
         }
         if (isOgg(data)) {
-            scheduler.execute(() -> transcribeSegment(data, endMs));
+            scheduler.execute(() -> decodeAndProcess(data, endMs));
             return;
         }
-        // 헤더 없는 webm 연속 청크 (MediaRecorder timeslice) — init segment을 붙여 완결 파일로 복원
-        if (webmInit != null) {
-            byte[] full = new byte[webmInit.length + data.length];
-            System.arraycopy(webmInit, 0, full, 0, webmInit.length);
-            System.arraycopy(data, 0, full, webmInit.length, data.length);
-            scheduler.execute(() -> transcribeSegment(full, endMs));
+        // 헤더 없는 webm 연속 청크 (MediaRecorder timeslice) — 누적 후 flush에서 경계 정렬 처리
+        if (webmMode) {
+            if (webmInit == null) {
+                log.warn("[Whisper] init segment 없음 — 연속 청크 {}바이트 폐기", data.length);
+                return;
+            }
+            synchronized (webmClusterBuf) {
+                webmClusterBuf.write(data, 0, data.length);
+            }
             return;
         }
-        // raw PCM 경로 (5초 버퍼 후 WAV 변환)
-        synchronized (audioBuffer) {
-            audioBuffer.write(data, 0, data.length);
+        // raw PCM 경로 — 바로 VAD 파이프라인 투입
+        scheduler.execute(() -> processPcm(data));
+    }
+
+    /**
+     * 누적된 연속 클러스터를 첫 Cluster 경계부터 잘라 init segment을 붙여 완결 webm으로 변환.
+     * 청크가 클러스터 중간에서 잘려 온 경우 경계 이전 파편은 버림 (한 번의 짧은 유실로 정렬 복구).
+     */
+    private void flushWebmClusters() {
+        if (webmInit == null) return;
+        byte[] clusters;
+        synchronized (webmClusterBuf) {
+            if (webmClusterBuf.size() == 0) return;
+            clusters = webmClusterBuf.toByteArray();
+            webmClusterBuf.reset();
         }
+        int start = indexOfCluster(clusters, 0);
+        if (start < 0) {
+            log.warn("[Whisper] 클러스터 경계 없음 — {}바이트 폐기", clusters.length);
+            return;
+        }
+        byte[] file = new byte[webmInit.length + clusters.length - start];
+        System.arraycopy(webmInit, 0, file, 0, webmInit.length);
+        System.arraycopy(clusters, start, file, webmInit.length, clusters.length - start);
+        decodeAndProcess(file, System.currentTimeMillis());
+    }
+
+    /**
+     * webm/ogg 세그먼트 → ffmpeg 디코딩 → VAD 파이프라인.
+     * ffmpeg 불가 시 기존 방식(컨테이너 그대로 Whisper 전송 + 메타데이터 필터)으로 폴백.
+     */
+    private void decodeAndProcess(byte[] container, long endMs) {
+        byte[] pcm = FfmpegPcmDecoder.decode(container);
+        if (pcm == null) {
+            transcribeSegment(container, endMs);
+            return;
+        }
+        processPcm(pcm);
+    }
+
+    // ── VAD: 30ms 프레임 에너지 분석 → 발화(utterance) 단위 분리 ──
+    private void processPcm(byte[] pcm) {
+        lastAudioMs = System.currentTimeMillis();
+        frameRemainder.write(pcm, 0, pcm.length);
+        byte[] all = frameRemainder.toByteArray();
+        int full = (all.length / FRAME_BYTES) * FRAME_BYTES;
+        for (int off = 0; off < full; off += FRAME_BYTES) {
+            byte[] frame = new byte[FRAME_BYTES];
+            System.arraycopy(all, off, frame, 0, FRAME_BYTES);
+            handleFrame(frame);
+        }
+        frameRemainder.reset();
+        frameRemainder.write(all, full, all.length - full);
+    }
+
+    private void handleFrame(byte[] frame) {
+        boolean voiced = rms(frame) > VAD_RMS_THRESHOLD;
+        if (inUtterance) {
+            utteranceBuf.write(frame, 0, frame.length);
+            if (voiced) {
+                voicedFrames++;
+                silentFrames = 0;
+            } else if (++silentFrames >= SILENCE_END_FRAMES) {
+                endUtterance();
+                return;
+            }
+            if (utteranceBuf.size() >= MAX_UTTERANCE_BYTES) {
+                endUtterance();
+            }
+        } else if (voiced) {
+            inUtterance = true;
+            voicedFrames = 1;
+            silentFrames = 0;
+            for (byte[] pre : preRoll) utteranceBuf.write(pre, 0, pre.length);
+            preRoll.clear();
+            utteranceBuf.write(frame, 0, frame.length);
+        } else {
+            preRoll.addLast(frame);
+            if (preRoll.size() > PRE_ROLL_FRAMES) preRoll.removeFirst();
+        }
+    }
+
+    private static double rms(byte[] f) {
+        long sum = 0;
+        int n = f.length / 2;
+        for (int i = 0; i + 1 < f.length; i += 2) {
+            int s = (short) ((f[i] & 0xFF) | (f[i + 1] << 8));
+            sum += (long) s * s;
+        }
+        return Math.sqrt((double) sum / n);
+    }
+
+    private void endUtterance() {
+        byte[] pcm = utteranceBuf.toByteArray();
+        utteranceBuf.reset();
+        inUtterance = false;
+        silentFrames = 0;
+        int voiced = voicedFrames;
+        voicedFrames = 0;
+
+        if (voiced < MIN_VOICED_FRAMES) {
+            log.debug("[VAD] 짧은 발화 폐기 — voicedFrames={}", voiced);
+            return;
+        }
+        try {
+            double durationSec = pcm.length / (double) (SAMPLE_RATE * 2);
+            double endSec = Math.max(0, (lastAudioMs - meetingStartMs) / 1000.0);
+            double startSec = Math.max(0, endSec - durationSec);
+            String text = transcribe(toWav(pcm), "audio.wav");
+            if (text != null && !text.isBlank()) {
+                onFinal.accept(new Transcript(text.trim(), startSec, endSec));
+                log.info("[Whisper] 발화 변환 완료 — [{}-{}s, {}s분량] \"{}\"",
+                        String.format("%.1f", startSec), String.format("%.1f", endSec),
+                        String.format("%.1f", durationSec), text.trim());
+            }
+        } catch (Exception e) {
+            log.error("[Whisper] 발화 변환 실패: {}", e.getMessage());
+        }
+    }
+
+    /** Cluster 엘리먼트 ID(0x1F43B675) 위치 탐색 */
+    private static int indexOfCluster(byte[] d, int from) {
+        for (int i = from; i + 3 < d.length; i++) {
+            if ((d[i] & 0xFF) == 0x1F && (d[i + 1] & 0xFF) == 0x43
+                    && (d[i + 2] & 0xFF) == 0xB6 && (d[i + 3] & 0xFF) == 0x75) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean isWebm(byte[] d) {
@@ -121,19 +283,6 @@ public class WhisperStreamingSession {
 
     private static boolean isOgg(byte[] d) {
         return d.length >= 4 && d[0] == 'O' && d[1] == 'g' && d[2] == 'g' && d[3] == 'S';
-    }
-
-    /** 첫 Cluster(0x1F43B675) 직전까지가 init segment — 못 찾으면 복원 불가(null) */
-    private static byte[] extractWebmInit(byte[] chunk) {
-        for (int i = 0; i + 3 < chunk.length; i++) {
-            if ((chunk[i] & 0xFF) == 0x1F && (chunk[i + 1] & 0xFF) == 0x43
-                    && (chunk[i + 2] & 0xFF) == 0xB6 && (chunk[i + 3] & 0xFF) == 0x75) {
-                byte[] init = new byte[i];
-                System.arraycopy(chunk, 0, init, 0, i);
-                return init;
-            }
-        }
-        return null;
     }
 
     private void transcribeSegment(byte[] webm, long endMs) {
@@ -154,37 +303,19 @@ public class WhisperStreamingSession {
     public void close() {
         if (closed) return;
         closed = true;
+        // VAD 상태는 whisper-flush 스레드 전용이므로 마지막 정리도 그 스레드에서 실행
+        scheduler.execute(() -> {
+            flushWebmClusters();
+            if (inUtterance) endUtterance();
+        });
         scheduler.shutdown();
-        flush();
     }
 
     private void flush() {
-        byte[] pcm;
-        long startMs;
-        synchronized (audioBuffer) {
-            if (audioBuffer.size() < MIN_BUFFER_BYTES) {
-                audioBuffer.reset();
-                bufferStartMs = System.currentTimeMillis();
-                return;
-            }
-            pcm = audioBuffer.toByteArray();
-            startMs = bufferStartMs;
-            audioBuffer.reset();
-            bufferStartMs = System.currentTimeMillis();
-        }
-
-        try {
-            byte[] wav = toWav(pcm);
-            String text = transcribe(wav, "audio.wav");
-            if (text != null && !text.isBlank()) {
-                double startSec = Math.max(0, (startMs - meetingStartMs) / 1000.0);
-                double endSec   = (System.currentTimeMillis() - meetingStartMs) / 1000.0;
-                onFinal.accept(new Transcript(text.trim(), startSec, endSec));
-                log.info("[Whisper] 변환 완료 — [{}-{}s] \"{}\"",
-                        String.format("%.1f", startSec), String.format("%.1f", endSec), text.trim());
-            }
-        } catch (Exception e) {
-            log.error("[Whisper] 변환 실패: {}", e.getMessage());
+        flushWebmClusters();
+        // 오디오 유입이 끊긴 채 발화가 열려 있으면 종료 처리 (마이크 OFF 등)
+        if (inUtterance && System.currentTimeMillis() - lastAudioMs > 1500) {
+            endUtterance();
         }
     }
 
@@ -197,7 +328,8 @@ public class WhisperStreamingSession {
         body.add("language", language);
         body.add("response_format", "verbose_json");
         body.add("temperature", "0.0");
-        body.add("prompt", "한국어 회의 내용입니다. 음성이 없는 구간은 침묵하고, 절대 말을 지어내지 마세요.");
+        // 주의: prompt 파라미터는 무음 구간에서 프롬프트 문장이 자막으로 유출되는 부작용이 있어 사용 금지
+        // (실측: "음성이 없는 구간은 침묵하고..."가 transcript로 브로드캐스트됨)
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);

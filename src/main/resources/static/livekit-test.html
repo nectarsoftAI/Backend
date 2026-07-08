@@ -388,7 +388,8 @@ async function connectLiveKit() {
       log(`[LiveKit] 기존 참여자 — ${p.identity}`);
       var pubs = p.audioTrackPublications || p.audioTracks; // v2 || v1
       pubs.forEach(pub => {
-        if (pub.track) {
+        // TrackSubscribed 이벤트에서 이미 attach된 트랙은 건너뜀 (중복 재생 방지)
+        if (pub.track && !(pub.track.attachedElements || []).length) {
           const el = pub.track.attach();
           el.autoplay = true;
           document.getElementById('audioContainer').appendChild(el);

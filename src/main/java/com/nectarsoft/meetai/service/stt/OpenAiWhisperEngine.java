@@ -46,9 +46,8 @@ public class OpenAiWhisperEngine implements SttEngine {
         MeetAiProperties.Openai cfg = props.getOpenai();
         log.info("[Whisper] 변환 시작 — {}", audioPath.getFileName());
 
-        // 환각 완화를 위한 프롬프트 가이드라인 지정 (너무 장황하지 않게 제어)
-        String systemPrompt = "한국어 회의 내용입니다. 음성이 없는 구간은 침묵하고, 절대 말을 지어내지 마세요.";
-
+        // 주의: prompt 파라미터는 무음 구간에서 프롬프트 문장이 결과로 유출되는 부작용이 있어 사용 금지
+        // (실측: "음성이 없는 구간은 침묵하고..."가 transcript에 그대로 섞여 나옴)
         RequestBody body = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("model", cfg.getWhisperModel())
@@ -56,7 +55,6 @@ public class OpenAiWhisperEngine implements SttEngine {
                 .addFormDataPart("response_format", "verbose_json")
                 .addFormDataPart("timestamp_granularities[]", "segment")
                 .addFormDataPart("temperature", "0.0") // 실시간/정밀 변환에서 환각을 줄이기 위해 온도를 0으로 고정
-                .addFormDataPart("prompt", systemPrompt)
                 .addFormDataPart("file",
                         audioPath.getFileName().toString(),
                         RequestBody.create(audioPath.toFile(),
