@@ -176,10 +176,18 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
 
         log.info("[OnlineWS] 연결 종료 — meetingId={}, profileId={}, status={}", meetingId, profileId, status);
 
-        if (roomManager.getProfileIds(meetingId).isEmpty()) {
-            log.info("[OnlineWS] 모든 참여자 퇴장 — 회의 자동 종료 meetingId={}", meetingId);
-            endMeeting(meetingId);
-        }
+        // 게스트가 모두 퇴장하면 회의 종료 (방장 연결 여부는 무관)
+        // 방장이 네트워크 문제로 끊겨도 게스트가 남아 있으면 회의는 계속됨
+        meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
+            if (m.getStatus() == MeetingStatus.COMPLETED) return;
+            String adminId = m.getUserId().toString();
+            boolean guestsRemain = roomManager.getProfileIds(meetingId)
+                    .stream().anyMatch(p -> !p.equals(adminId));
+            if (!guestsRemain) {
+                log.info("[OnlineWS] 모든 게스트 퇴장 — 회의 종료, meetingId={}", meetingId);
+                endMeeting(meetingId);
+            }
+        });
     }
 
     @Override
