@@ -15,10 +15,8 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -57,9 +55,8 @@ public class RealtimeSttSession implements SttStreamSession {
     private Process ffmpeg;
     private OutputStream ffmpegIn;
 
-    // 발화 타임스탬프 추적 (audio_start_ms/audio_end_ms는 세션 오디오 타임라인 기준)
-    private final Queue<long[]> speechTimes = new ConcurrentLinkedQueue<>();
-    private volatile long currentSpeechStartMs = 0;
+    // 발화 타임스탬프: item_id로 매칭 — 전사 완료(completed)는 발화 순서와 다르게 도착할 수 있음
+    private final Map<String, long[]> speechTimesByItem = new ConcurrentHashMap<>();
     private final Map<String, StringBuilder> partials = new ConcurrentHashMap<>();
 
     public RealtimeSttSession(String apiKey, String model, String language,
@@ -248,9 +245,12 @@ public class RealtimeSttSession implements SttStreamSession {
             String type = node.path("type").asText("");
             switch (type) {
                 case "input_audio_buffer.speech_started" ->
-                        currentSpeechStartMs = node.path("audio_start_ms").asLong(0);
-                case "input_audio_buffer.speech_stopped" ->
-                        speechTimes.add(new long[]{currentSpeechStartMs, node.path("audio_end_ms").asLong(0)});
+                        speechTimesByItem.put(node.path("item_id").asText(""),
+                                new long[]{node.path("audio_start_ms").asLong(0), -1});
+                case "input_audio_buffer.speech_stopped" -> {
+                    long[] t = speechTimesByItem.get(node.path("item_id").asText(""));
+                    if (t != null) t[1] = node.path("audio_end_ms").asLong(0);
+                }
                 case "conversation.item.input_audio_transcription.delta" -> {
                     String itemId = node.path("item_id").asText("");
                     String acc = partials.computeIfAbsent(itemId, k -> new StringBuilder())
@@ -258,12 +258,13 @@ public class RealtimeSttSession implements SttStreamSession {
                     if (!acc.isBlank()) onPartial.accept(acc);
                 }
                 case "conversation.item.input_audio_transcription.completed" -> {
-                    partials.remove(node.path("item_id").asText(""));
+                    String itemId = node.path("item_id").asText("");
+                    partials.remove(itemId);
                     String text = node.path("transcript").asText("").trim();
                     if (text.isEmpty() || HALLUCINATION_PATTERN.matcher(text).find()) return;
-                    long[] t = speechTimes.poll();
+                    long[] t = speechTimesByItem.remove(itemId);
                     double startSec, endSec;
-                    if (t != null) {
+                    if (t != null && t[1] > 0) {
                         startSec = Math.max(0, (sessionStartMs - meetingStartMs + t[0]) / 1000.0);
                         endSec   = Math.max(0, (sessionStartMs - meetingStartMs + t[1]) / 1000.0);
                     } else {
