@@ -127,15 +127,18 @@ public class RealtimeSttSession implements SttStreamSession {
     }
 
     private void startFfmpeg(boolean container) throws IOException {
-        List<String> cmd = new ArrayList<>(List.of("ffmpeg", "-hide_banner", "-loglevel", "error"));
+        // analyzeduration 기본값(5초)이 스트림 시작을 통째로 버퍼링하므로 반드시 0으로 —
+        // 빠뜨리면 partial 자막이 수 초 뒤에 몰아서 도착함 (실측)
+        List<String> cmd = new ArrayList<>(List.of("ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-fflags", "nobuffer", "-analyzeduration", "0"));
         if (container) {
             // 스트리밍 webm/ogg — 헤더만으로 즉시 디코딩 시작하도록 probe 최소화
-            cmd.addAll(List.of("-fflags", "nobuffer", "-probesize", "8192", "-analyzeduration", "0"));
+            cmd.addAll(List.of("-probesize", "8192"));
         } else {
             // raw PCM 클라이언트 (16kHz mono s16le 가정)
-            cmd.addAll(List.of("-f", "s16le", "-ar", "16000", "-ac", "1"));
+            cmd.addAll(List.of("-probesize", "32", "-f", "s16le", "-ar", "16000", "-ac", "1"));
         }
-        cmd.addAll(List.of("-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", "24000", "pipe:1"));
+        cmd.addAll(List.of("-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", "24000", "-flush_packets", "1", "pipe:1"));
 
         ffmpeg = new ProcessBuilder(cmd).start();
         ffmpegIn = ffmpeg.getOutputStream();
