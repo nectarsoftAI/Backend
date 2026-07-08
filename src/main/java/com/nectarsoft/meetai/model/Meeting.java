@@ -15,10 +15,10 @@ public class Meeting {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "meeting_id", columnDefinition = "uuid", updatable = false)
+    @Column(name = "meeting_id", updatable = false)
     private UUID meetingId;
 
-    @Column(name = "user_id", columnDefinition = "uuid")
+    @Column(name = "user_id")
     private UUID userId;
 
     @Column(length = 255)
@@ -35,7 +35,7 @@ public class Meeting {
     @Column(name = "duration_seconds")
     private Integer durationSeconds;
 
-    @Column(name = "meeting_date", columnDefinition = "timestamptz")
+    @Column(name = "meeting_date")
     private OffsetDateTime meetingDate;
 
     @Column(name = "meeting_token", unique = true, length = 10)
@@ -49,10 +49,10 @@ public class Meeting {
     }
 
     @CreationTimestamp
-    @Column(name = "created_at", updatable = false, columnDefinition = "timestamptz")
+    @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;
 
     @UpdateTimestamp
-    @Column(name = "updated_at", columnDefinition = "timestamptz")
+    @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
 }

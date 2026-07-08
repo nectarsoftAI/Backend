@@ -33,25 +33,25 @@ public class MeetingSummary {
     private SttProcessingStatus processingStatus;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "key_points", columnDefinition = "jsonb")
+    @Column(name = "key_points")
     private String keyPoints;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "decisions", columnDefinition = "jsonb")
+    @Column(name = "decisions")
     private String decisions;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "action_items", columnDefinition = "jsonb")
+    @Column(name = "action_items")
     private String actionItems;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "keywords", columnDefinition = "jsonb")
+    @Column(name = "keywords")
     private String keywords;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "raw_response", columnDefinition = "jsonb")
+    @Column(name = "raw_response")
     private String rawResponse;
 
-    @Column(name = "processed_at", columnDefinition = "timestamptz")
+    @Column(name = "processed_at")
     private OffsetDateTime processedAt;
 }

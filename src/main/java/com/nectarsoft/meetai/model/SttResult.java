@@ -27,6 +27,6 @@ public class SttResult {
     @Column(name = "processing_status", nullable = false)
     private SttProcessingStatus processingStatus;
 
-    @Column(name = "processed_at", columnDefinition = "timestamptz")
+    @Column(name = "processed_at")
     private OffsetDateTime processedAt;
 }

@@ -76,8 +76,9 @@ public class AssemblyAiStreamingManager {
             throw new IllegalStateException("OPENAI_API_KEY not configured");
         }
 
-        // OpenAI Realtime (말하는 중 자막) — realtime-enabled=true일 때만 시도, 실패 시 Whisper 배치 폴백
-        if (props.getOpenai().isRealtimeEnabled()) try {
+        // OpenAI Realtime (말하는 중 자막) — realtime-enabled=true이고 ffmpeg가 있을 때만.
+        // ffmpeg 없는 환경(로컬 개발 등)은 Whisper 배치로 — webm 직접 업로드/순수 Java VAD 경로라 ffmpeg 불필요
+        if (props.getOpenai().isRealtimeEnabled() && FfmpegPcmDecoder.isAvailable()) try {
             RealtimeSttSession session = new RealtimeSttSession(
                     apiKey,
                     props.getOpenai().getRealtimeModel(),

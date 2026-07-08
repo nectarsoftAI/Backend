@@ -15,17 +15,16 @@ public class Profile {
 
     /** auth.users.id 참조 */
     @Id
-    @Column(columnDefinition = "uuid")
     private UUID id;
 
     @Column(name = "display_name", length = 100)
     private String displayName;
 
     @CreationTimestamp
-    @Column(name = "created_at", updatable = false, columnDefinition = "timestamptz")
+    @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;
 
     @UpdateTimestamp
-    @Column(name = "updated_at", columnDefinition = "timestamptz")
+    @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
 }

@@ -22,7 +22,7 @@ public class MeetingParticipant {
     @JoinColumn(name = "meeting_id", nullable = false)
     private Meeting meeting;
 
-    @Column(name = "profile_id", nullable = false, columnDefinition = "uuid")
+    @Column(name = "profile_id", nullable = false)
     private UUID profileId;
 
     @Enumerated(EnumType.STRING)
@@ -47,6 +47,6 @@ public class MeetingParticipant {
     private boolean canRunMeeting = false;
 
     @CreationTimestamp
-    @Column(name = "joined_at", updatable = false, columnDefinition = "timestamptz")
+    @Column(name = "joined_at", updatable = false)
     private OffsetDateTime joinedAt;
 }

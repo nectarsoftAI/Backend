@@ -2,6 +2,8 @@ package com.nectarsoft.meetai.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "transcripts")
@@ -33,6 +35,7 @@ public class Transcript {
     @Column(name = "end_sec")
     private Double endSec;
 
-    @Column(columnDefinition = "TEXT")
+    // PG: text / H2: clob — 방언 중립 롱텍스트 (columnDefinition "TEXT"는 H2 2.x에서 미지원)
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String content;
 }
