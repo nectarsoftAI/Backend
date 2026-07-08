@@ -15,10 +15,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 온라인 회의 참여자별 AssemblyAI 실시간 스트리밍 세션 관리
+ * 온라인 회의 참여자별 Whisper STT 세션 관리
  * - 참여자 첫 오디오 수신 시 세션 생성 (lazy)
- * - FinalTranscript: DB 저장 + 브로드캐스트
- * - PartialTranscript: 브로드캐스트 only (DB 저장 안 함)
+ * - 5초 단위 배치 전송 → FinalTranscript: DB 저장 + 브로드캐스트
  */
 @Slf4j
 @Component
@@ -34,7 +33,7 @@ public class AssemblyAiStreamingManager {
     private final ObjectMapper objectMapper;
 
     // key: "meetingId:profileId"
-    private final ConcurrentHashMap<String, AssemblyAiStreamingSession> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, WhisperStreamingSession> sessions = new ConcurrentHashMap<>();
 
     public void sendAudio(String meetingId, String profileId, byte[] pcm) {
         sessions.computeIfAbsent(key(meetingId, profileId), k -> createSession(meetingId, profileId))
@@ -42,7 +41,7 @@ public class AssemblyAiStreamingManager {
     }
 
     public void endSession(String meetingId, String profileId) {
-        AssemblyAiStreamingSession s = sessions.remove(key(meetingId, profileId));
+        WhisperStreamingSession s = sessions.remove(key(meetingId, profileId));
         if (s != null) {
             s.close();
             log.info("[StreamingMgr] 세션 종료 — meetingId={}, profileId={}", meetingId, profileId);
@@ -54,13 +53,13 @@ public class AssemblyAiStreamingManager {
                 .filter(k -> k.startsWith(meetingId + ":"))
                 .toList()
                 .forEach(k -> {
-                    AssemblyAiStreamingSession s = sessions.remove(k);
+                    WhisperStreamingSession s = sessions.remove(k);
                     if (s != null) s.close();
                 });
         log.info("[StreamingMgr] 회의 전체 세션 종료 — meetingId={}", meetingId);
     }
 
-    private AssemblyAiStreamingSession createSession(String meetingId, String profileId) {
+    private WhisperStreamingSession createSession(String meetingId, String profileId) {
         String resolvedDisplay = profileRepo.findById(UUID.fromString(profileId))
                 .map(p -> p.getDisplayName() != null ? p.getDisplayName() : profileId.substring(0, 8))
                 .orElse(profileId.substring(0, 8));
@@ -71,39 +70,25 @@ public class AssemblyAiStreamingManager {
                 .map(m -> System.currentTimeMillis() - m.getMeetingDate().toInstant().toEpochMilli())
                 .orElse(0L);
 
-        String apiKey = props.getAssemblyai().getApiKey();
+        String apiKey = props.getOpenai().getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
-            log.error("[StreamingMgr] ASSEMBLYAI_API_KEY 환경변수가 설정되지 않았습니다");
-            throw new IllegalStateException("ASSEMBLYAI_API_KEY not configured");
+            log.error("[StreamingMgr] OPENAI_API_KEY 환경변수가 설정되지 않았습니다");
+            throw new IllegalStateException("OPENAI_API_KEY not configured");
         }
 
-        try {
-            AssemblyAiStreamingSession session = new AssemblyAiStreamingSession(
-                    apiKey,
-                    16000,
-                    sessionOffsetMs,
-                    t -> onFinal(meetingId, profileId, resolvedDisplay, t),
-                    text -> onPartial(meetingId, profileId, resolvedDisplay, text)
-            );
-            log.info("[StreamingMgr] 세션 생성 — meetingId={}, profileId={}, offsetMs={}", meetingId, profileId, sessionOffsetMs);
-            return session;
-        } catch (java.util.concurrent.CompletionException ce) {
-            Throwable cause = ce.getCause();
-            if (cause instanceof java.net.http.WebSocketHandshakeException wse) {
-                log.error("[StreamingMgr] AssemblyAI 핸드셰이크 실패 — HTTP {}: {}",
-                        wse.getResponse().statusCode(), wse.getResponse().uri());
-            } else {
-                log.error("[StreamingMgr] AssemblyAI 연결 실패 — profileId={}: {}", profileId, cause != null ? cause.getMessage() : ce.getMessage());
-            }
-            throw new RuntimeException(ce);
-        } catch (Exception e) {
-            log.error("[StreamingMgr] 세션 생성 실패 — profileId={}: {}", profileId, e.getMessage());
-            throw new RuntimeException(e);
-        }
+        WhisperStreamingSession session = new WhisperStreamingSession(
+                apiKey,
+                props.getOpenai().getWhisperModel(),
+                props.getOpenai().getWhisperLanguage(),
+                sessionOffsetMs,
+                t -> onFinal(meetingId, profileId, resolvedDisplay, t)
+        );
+        log.info("[StreamingMgr] Whisper 세션 생성 — meetingId={}, profileId={}, offsetMs={}", meetingId, profileId, sessionOffsetMs);
+        return session;
     }
 
     private void onFinal(String meetingId, String profileId, String display,
-                         AssemblyAiStreamingSession.Transcript t) {
+                         WhisperStreamingSession.Transcript t) {
         try {
             Meeting meeting = meetingRepo.findById(UUID.fromString(meetingId)).orElse(null);
             if (meeting == null) return;
@@ -137,20 +122,6 @@ public class AssemblyAiStreamingManager {
             log.info("[StreamingMgr] FinalTranscript — [{}] \"{}\"", display, t.text());
         } catch (Exception e) {
             log.error("[StreamingMgr] FinalTranscript 처리 실패: {}", e.getMessage());
-        }
-    }
-
-    private void onPartial(String meetingId, String profileId, String display, String text) {
-        try {
-            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
-                    "type", "transcript",
-                    "profileId", profileId,
-                    "speakerDisplay", display,
-                    "text", text,
-                    "isFinal", false
-            )));
-        } catch (Exception e) {
-            log.warn("[StreamingMgr] PartialTranscript 브로드캐스트 실패: {}", e.getMessage());
         }
     }
 

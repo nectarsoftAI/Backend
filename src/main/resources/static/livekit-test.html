@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MeetAI LiveKit 통합 테스트</title>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #111827; color: #f3f4f6; min-height: 100vh; }
+
+/* ── 화면 전환 ── */
+.screen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 16px; }
+.screen.active { display: flex; }
+#meetingScreen { display: none; flex-direction: column; height: 100vh; }
+#meetingScreen.active { display: flex; }
+
+/* ── 로그인 ── */
+#loginScreen h1 { font-size: 28px; color: #60a5fa; }
+#loginScreen p  { color: #6b7280; font-size: 14px; }
+.input { width: 320px; padding: 12px 16px; background: #1f2937; border: 1px solid #374151; color: #f3f4f6; border-radius: 8px; font-size: 14px; outline: none; }
+.input:focus { border-color: #60a5fa; }
+.err { color: #ef4444; font-size: 13px; display: none; }
+
+/* ── 홈 ── */
+#homeScreen h1 { font-size: 36px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.row .input { width: 240px; border-radius: 30px; }
+
+/* ── 버튼 ── */
+.btn { padding: 12px 24px; border: none; border-radius: 30px; cursor: pointer; font-size: 14px; font-weight: 600; transition: .15s; }
+.btn-blue  { background: #2563eb; color: #fff; }
+.btn-blue:hover { background: #1d4ed8; }
+.btn-gray  { background: #374151; color: #f3f4f6; border: 1px solid #4b5563; }
+.btn-gray:hover { background: #4b5563; }
+.btn-red   { background: #dc2626; color: #fff; }
+.btn-red:hover { background: #b91c1c; }
+.btn-green { background: #16a34a; color: #fff; }
+.btn-green:hover { background: #15803d; }
+.btn-icon { width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer; font-size: 20px; display: flex; align-items: center; justify-content: center; transition: .15s; }
+.btn-icon.gray  { background: #374151; }
+.btn-icon.gray:hover { background: #4b5563; }
+.btn-icon.active { background: #2563eb; }
+.btn-icon.red   { background: #dc2626; }
+.btn:disabled, .btn-icon:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── 회의 레이아웃 ── */
+.meeting-header { padding: 12px 20px; background: #1f2937; border-bottom: 1px solid #374151; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.meeting-header .title { font-size: 16px; font-weight: 600; }
+.meeting-header .meta  { font-size: 12px; color: #6b7280; margin-top: 2px; display: flex; gap: 8px; align-items: center; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #4b5563; display: inline-block; }
+.dot.live { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.dot.error { background: #ef4444; }
+.meeting-body { display: flex; flex: 1; overflow: hidden; }
+.main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── 비디오/오디오 참여자 ── */
+#audioContainer { display: none; }
+.video-grid { display: flex; gap: 8px; padding: 12px; background: #0f172a; flex-wrap: wrap; min-height: 80px; align-items: center; }
+.participant-tile { width: 140px; height: 80px; background: #1e293b; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px solid #334155; position: relative; font-size: 12px; }
+.participant-tile .avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; }
+.participant-tile .name { font-size: 11px; color: #94a3b8; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.participant-tile .mic-icon { position: absolute; bottom: 4px; right: 4px; font-size: 12px; }
+.participant-tile.speaking { border-color: #22c55e; }
+.video-grid-label { padding: 6px 12px; font-size: 11px; color: #6b7280; background: #0f172a; flex-shrink: 0; }
+
+/* ── 자막 ── */
+.transcript-area { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.seg { background: #1e293b; border-radius: 10px; padding: 10px 14px; max-width: 680px; }
+.seg .who  { font-size: 11px; color: #60a5fa; margin-bottom: 4px; }
+.seg .text { font-size: 14px; line-height: 1.5; }
+.seg.me { align-self: flex-end; background: #1e3a5f; }
+.seg.me .who { color: #93c5fd; }
+.seg.partial { opacity: .6; border-left: 2px solid #60a5fa; }
+
+/* ── 사이드 패널 ── */
+.side { width: 260px; background: #1f2937; border-left: 1px solid #374151; display: flex; flex-direction: column; flex-shrink: 0; }
+.side-title { padding: 12px 14px; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #374151; }
+.p-list { flex: 1; overflow-y: auto; padding: 6px; }
+.p-item { padding: 8px 10px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: default; }
+.p-item:hover { background: #374151; }
+.p-avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; }
+.p-role { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: #374151; color: #9ca3af; margin-left: auto; }
+.p-role.admin { background: #1e3a5f; color: #60a5fa; }
+.log-area { height: 140px; border-top: 1px solid #374151; overflow-y: auto; padding: 6px 8px; font-size: 10px; font-family: monospace; color: #6b7280; flex-shrink: 0; }
+.log-area .tx  { color: #22c55e; }
+.log-area .rx  { color: #60a5fa; }
+.log-area .err { color: #ef4444; }
+.log-area .warn { color: #f59e0b; }
+
+/* ── 푸터 ── */
+.meeting-footer { padding: 14px; background: #1f2937; border-top: 1px solid #374151; display: flex; align-items: center; justify-content: center; gap: 12px; flex-shrink: 0; }
+
+/* ── 상태 배지 ── */
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; }
+.badge.connected { background: #14532d; color: #4ade80; }
+.badge.disconnected { background: #374151; color: #9ca3af; }
+.badge.error { background: #450a0a; color: #fca5a5; }
+</style>
+</head>
+<body>
+
+<!-- 숨김 오디오 컨테이너 -->
+<div id="audioContainer"></div>
+
+<!-- ── 로그인 ── -->
+<div id="loginScreen" class="screen active">
+  <h1>MeetAI LiveKit 테스트</h1>
+  <p style="color:#6b7280;font-size:14px">닉네임을 입력하면 테스트용 UUID가 자동 생성됩니다</p>
+  <input id="nicknameInput" class="input" type="text" placeholder="닉네임 (예: 마크, 테스터1)"/>
+  <div id="loginErr" class="err"></div>
+  <button id="loginBtn" class="btn btn-blue">입장</button>
+  <p style="color:#374151;font-size:11px;margin-top:8px">Profile ID: <span id="previewId" style="color:#4b5563;font-family:monospace"></span></p>
+</div>
+
+<!-- ── 홈 ── -->
+<div id="homeScreen" class="screen">
+  <h1 style="color:#60a5fa">화상 회의</h1>
+  <p style="color:#6b7280;font-size:14px" id="homeEmail"></p>
+  <div class="row">
+    <button id="btnCreate" class="btn btn-blue">+ 새 회의</button>
+    <input id="joinInput" class="input" placeholder="meetingId:inviteToken"/>
+    <button id="btnJoin" class="btn btn-gray">참여</button>
+  </div>
+  <button id="btnLogout" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:12px;margin-top:8px">로그아웃</button>
+</div>
+
+<!-- ── 회의 ── -->
+<div id="meetingScreen">
+  <!-- 헤더 -->
+  <div class="meeting-header">
+    <div>
+      <div class="title" id="meetingTitle">회의</div>
+      <div class="meta">
+        <span class="dot" id="sigDot" title="시그널링 WS"></span> 시그널
+        &nbsp;
+        <span class="dot" id="lkDot" title="LiveKit WebRTC"></span> LiveKit
+        &nbsp;·&nbsp;
+        <span id="meetingIdLabel" style="color:#4b5563;font-size:11px"></span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="btnCopyInvite" class="btn btn-gray" style="font-size:12px;padding:8px 14px">초대 코드 복사</button>
+    </div>
+  </div>
+
+  <div class="meeting-body">
+    <div class="main-area">
+      <div class="video-grid-label">참여자 (LiveKit)</div>
+      <div class="video-grid" id="videoGrid"></div>
+      <div class="transcript-area" id="transcriptArea">
+        <div id="transcriptHint" style="text-align:center;color:#4b5563;margin-top:40px;font-size:13px">회의 시작 후 자막이 여기에 표시됩니다.</div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="side-title">참여자 <span id="pCount" style="color:#9ca3af"></span></div>
+      <div class="p-list" id="pList"></div>
+      <div class="side-title">이벤트 로그</div>
+      <div class="log-area" id="logArea"></div>
+    </div>
+  </div>
+
+  <div class="meeting-footer">
+    <button class="btn-icon gray" id="btnMic" title="마이크">🎙</button>
+    <button class="btn btn-green" id="btnStart">▶ 회의 시작</button>
+    <button class="btn-icon red" id="btnLeave" title="나가기">📞</button>
+    <button class="btn btn-red" id="btnEnd">■ 회의 종료</button>
+  </div>
+</div>
+
+<script>
+// ── 설정 ───────────────────────────────────────────────────────────
+var BASE    = 'https://backend-production-894a3.up.railway.app';
+var WS_BASE = 'wss://backend-production-894a3.up.railway.app';
+
+// ── 상태 (var: TDZ 없음) ───────────────────────────────────────────
+var myProfileId    = '';
+var myNickname     = '';
+var meetingId      = '';
+var inviteToken    = '';
+var ws             = null;
+var room           = null;
+var sttRecorder    = null;
+var micOn          = false;
+var participants   = {};
+var lkParticipants = {};
+var LK             = null;  // window.LivekitClient — DOMContentLoaded 후 할당
+
+// ── UUID 생성 ─────────────────────────────────────────────────────
+function genUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// ── 로그인 (닉네임 → UUID 자동 생성) ─────────────────────────────
+function quickLogin() {
+  var nick = (document.getElementById('nicknameInput').value || '').trim();
+  var err  = document.getElementById('loginErr');
+  if (!nick) { err.textContent = '닉네임을 입력하세요.'; err.style.display = 'block'; return; }
+  err.style.display = 'none';
+
+  // 같은 닉네임은 같은 UUID 재사용 (localStorage에 저장)
+  var stored = localStorage.getItem('nick_' + nick);
+  myProfileId = stored || genUUID();
+  myNickname  = nick;
+  localStorage.setItem('nick_' + nick, myProfileId);
+  localStorage.setItem('lastNick', nick);
+  showHome();
+}
+
+function logout() {
+  myProfileId = ''; myNickname = '';
+  show('loginScreen');
+}
+
+function showHome() {
+  document.getElementById('homeEmail').textContent = myNickname + ' (' + myProfileId.slice(0,8) + '...)';
+  show('homeScreen');
+}
+
+// ── 화면 전환 ─────────────────────────────────────────────────────
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById(id);
+  if (el) el.classList.add('active');
+  const ms = document.getElementById('meetingScreen');
+  if (id === 'meetingScreen') ms.style.display = 'flex';
+  else ms.style.display = 'none';
+}
+
+// ── 회의 생성/참여 ─────────────────────────────────────────────────
+async function createMeeting() {
+  try {
+    const res = await fetch(`${BASE}/api/v1/meetings/online`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': myProfileId },
+      body: JSON.stringify({ title: '새 회의' })
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    enterMeeting(data.meetingId, data.token);
+  } catch(e) { alert('회의 생성 실패: ' + e.message); }
+}
+
+function joinWithCode() {
+  const code = document.getElementById('joinInput').value.trim();
+  if (!code) return alert('초대 코드를 입력하세요.');
+  const idx = code.indexOf(':');
+  if (idx < 0) return alert('형식: meetingId:inviteToken');
+  enterMeeting(code.slice(0, idx).trim(), code.slice(idx + 1).trim());
+}
+
+function enterMeeting(mid, token) {
+  meetingId = mid; inviteToken = token;
+  participants = {}; lkParticipants = {};
+  document.getElementById('meetingIdLabel').textContent = mid.slice(0, 8) + '...';
+  document.getElementById('transcriptArea').innerHTML =
+    '<div id="transcriptHint" style="text-align:center;color:#4b5563;margin-top:40px;font-size:13px">회의 시작 후 자막이 여기에 표시됩니다.</div>';
+  document.getElementById('logArea').innerHTML = '';
+  renderParticipants();
+  show('meetingScreen');
+  connectSignaling(token);
+  connectLiveKit();
+}
+
+// ── 시그널링 WebSocket (Spring) ───────────────────────────────────
+function connectSignaling(token) {
+  dot('sigDot', '');
+  log(`[WS] 연결 중 — ${meetingId.slice(0,8)}...`);
+  const url = `${WS_BASE}/api/v1/online/ws/${meetingId}`
+            + `?token=${encodeURIComponent(token)}&profileId=${encodeURIComponent(myProfileId)}`;
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen    = () => { dot('sigDot', 'live'); log('[WS] 연결됨', 'tx'); };
+  ws.onclose   = (e) => { dot('sigDot', 'error'); log(`[WS] 연결 종료 (${e.code})`, 'err'); };
+  ws.onerror   = ()  => { dot('sigDot', 'error'); log('[WS] 오류', 'err'); };
+  ws.onmessage = (e) => {
+    if (typeof e.data !== 'string') return;
+    try { handleSignal(JSON.parse(e.data)); } catch(_) {}
+  };
+}
+
+function signal(obj) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+    log(`→ ${obj.type}`, 'tx');
+  } else log('[WS] 미연결', 'err');
+}
+
+function handleSignal(msg) {
+  log(`← ${msg.type}`, 'rx');
+  switch(msg.type) {
+    case 'room_info':
+      (msg.participants || []).forEach(p => addParticipant(p.profileId, p.role));
+      break;
+    case 'participant_joined': addParticipant(msg.profileId, msg.role); break;
+    case 'participant_left':   removeParticipant(msg.profileId); break;
+    case 'meeting_started':    log('[회의] 시작됨 🔴', 'tx'); break;
+    case 'meeting_ended':      log('[회의] 종료됨', 'warn'); leaveMeeting(); break;
+    case 'kicked':             alert('강퇴되었습니다.'); leaveMeeting(); break;
+    case 'transcript':         addTranscript(msg); break;
+  }
+}
+
+// ── LiveKit WebRTC ─────────────────────────────────────────────────
+async function connectLiveKit() {
+  dot('lkDot', '');
+  log('[LiveKit] 토큰 요청 중...');
+  try {
+    const url = `${BASE}/api/v1/livekit/token`
+              + `?meetingId=${meetingId}&profileId=${myProfileId}&token=${encodeURIComponent(inviteToken)}`;
+    const res  = await fetch(url);
+    if (!res.ok) { log(`[LiveKit] 토큰 오류 ${res.status}`, 'err'); dot('lkDot', 'error'); return; }
+    const data = await res.json();
+    log(`[LiveKit] 토큰 발급 OK — url: ${data.url}`);
+
+    room = new LK.Room({
+      adaptiveStream: true,
+      dynacast: true,
+      audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+
+    // 리모트 참여자 오디오 구독
+    room.on(LK.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      if (track.kind === LK.Track.Kind.Audio) {
+        const el = track.attach();
+        document.getElementById('audioContainer').appendChild(el);
+        log(`[LiveKit] 오디오 구독 — ${participant.identity}`);
+      }
+    });
+
+    room.on(LK.RoomEvent.TrackUnsubscribed, (track) => { track.detach(); });
+
+    // 발화 감지 (테두리 강조)
+    room.on(LK.RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      document.querySelectorAll('.participant-tile').forEach(t => t.classList.remove('speaking'));
+      speakers.forEach(s => {
+        const tile = document.getElementById('tile_' + s.identity);
+        if (tile) tile.classList.add('speaking');
+      });
+    });
+
+    // 리모트 참여자 입장/퇴장
+    room.on(LK.RoomEvent.ParticipantConnected, (p) => {
+      lkParticipants[p.identity] = p;
+      addLkTile(p.identity, false);
+      log(`[LiveKit] 참여자 입장 — ${p.identity}`);
+    });
+    room.on(LK.RoomEvent.ParticipantDisconnected, (p) => {
+      delete lkParticipants[p.identity];
+      document.getElementById('tile_' + p.identity)?.remove();
+      log(`[LiveKit] 참여자 퇴장 — ${p.identity}`);
+    });
+
+    room.on(LK.RoomEvent.Disconnected, (reason) => {
+      dot('lkDot', 'error');
+      log(`[LiveKit] 연결 끊김 — ${reason}`, 'warn');
+    });
+
+    await room.connect(data.url, data.token);
+    dot('lkDot', 'live');
+    log('[LiveKit] 연결 완료 ✅');
+
+    // 로컬 참여자 타일 추가
+    addLkTile(room.localParticipant.identity, true);
+
+    // 이미 방에 있는 리모트 참여자 처리
+    room.remoteParticipants.forEach((p) => {
+      lkParticipants[p.identity] = p;
+      addLkTile(p.identity, false);
+      p.audioTrackPublications.forEach(pub => {
+        if (pub.track) {
+          const el = pub.track.attach();
+          document.getElementById('audioContainer').appendChild(el);
+        }
+      });
+    });
+
+  } catch(e) {
+    dot('lkDot', 'error');
+    log(`[LiveKit] 오류: ${e.message}`, 'err');
+    console.error('[LiveKit]', e);
+  }
+}
+
+// ── 마이크 토글 ────────────────────────────────────────────────────
+async function toggleMic() {
+  if (!room) { log('[LiveKit] 미연결 상태', 'err'); return; }
+  if (!micOn) {
+    try {
+      // LiveKit 마이크 활성화
+      await room.localParticipant.setMicrophoneEnabled(true);
+      micOn = true;
+      document.getElementById('btnMic').className = 'btn-icon active';
+      log('[LiveKit] 마이크 ON');
+
+      // 같은 트랙으로 STT용 MediaRecorder 생성
+      const pub = room.localParticipant.getTrackPublication(LK.Track.Source.Microphone);
+      const mst = pub?.track?.mediaStreamTrack;
+      if (mst) {
+        const stream = new MediaStream([mst]);
+        startSttRecorder(stream);
+      } else {
+        // fallback: 별도 getUserMedia
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        startSttRecorder(stream);
+      }
+    } catch(e) {
+      log(`[마이크] 오류: ${e.message}`, 'err');
+    }
+  } else {
+    await room.localParticipant.setMicrophoneEnabled(false);
+    stopSttRecorder();
+    micOn = false;
+    document.getElementById('btnMic').className = 'btn-icon gray';
+    log('[LiveKit] 마이크 OFF');
+    // 로컬 타일 업데이트
+    const tile = document.getElementById('tile_' + (room?.localParticipant?.identity || ''));
+    if (tile) tile.querySelector('.mic-icon').textContent = '🔇';
+  }
+}
+
+function startSttRecorder(stream) {
+  const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  sttRecorder = new MediaRecorder(stream, { mimeType: mime });
+  sttRecorder.ondataavailable = async (e) => {
+    if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+      ws.send(await e.data.arrayBuffer());
+      log(`[STT] ${(e.data.size/1024).toFixed(1)}KB 전송`, 'tx');
+    }
+  };
+  sttRecorder.start(5000);  // 5초 단위 전송 (Whisper flush 간격과 맞춤)
+  log('[STT] 녹음 시작 (5초 단위)', 'tx');
+
+  // 로컬 타일 마이크 아이콘 업데이트
+  const tile = document.getElementById('tile_' + (room?.localParticipant?.identity || ''));
+  if (tile) tile.querySelector('.mic-icon').textContent = '🎙';
+}
+
+function stopSttRecorder() {
+  if (!sttRecorder) return;
+  try { sttRecorder.stop(); } catch(_) {}
+  sttRecorder = null;
+  log('[STT] 녹음 중지');
+}
+
+// ── 회의 제어 ─────────────────────────────────────────────────────
+function startMeeting() { signal({ type: 'start_meeting' }); }
+function endMeeting()   { signal({ type: 'end_meeting' }); }
+
+async function leaveMeeting() {
+  stopSttRecorder();
+  if (room) { try { await room.disconnect(); } catch(_) {} room = null; }
+  if (ws)   { ws.close(); ws = null; }
+  micOn = false;
+  showHome();
+}
+
+function copyInvite() {
+  const code = `${meetingId}:${inviteToken}`;
+  navigator.clipboard.writeText(code).then(() => alert('복사됨!\n' + code));
+}
+
+// ── 참여자 타일 (LiveKit) ─────────────────────────────────────────
+function addLkTile(identity, isLocal) {
+  const grid = document.getElementById('videoGrid');
+  if (document.getElementById('tile_' + identity)) return;
+  const tile = document.createElement('div');
+  tile.className = 'participant-tile';
+  tile.id = 'tile_' + identity;
+  const color = strColor(identity);
+  const initial = identity.charAt(0).toUpperCase();
+  tile.innerHTML = `
+    <div class="avatar" style="background:${color}">${initial}</div>
+    <div class="name">${isLocal ? '나 (' + identity.slice(0,8) + ')' : identity.slice(0,8)}</div>
+    <div class="mic-icon">🔇</div>`;
+  grid.appendChild(tile);
+}
+
+// ── 시그널링 참여자 목록 ──────────────────────────────────────────
+function addParticipant(pid, role) {
+  participants[pid] = { profileId: pid, role: role || 'GUEST' };
+  renderParticipants();
+}
+function removeParticipant(pid) {
+  delete participants[pid]; renderParticipants();
+}
+function renderParticipants() {
+  const list = Object.values(participants);
+  document.getElementById('pCount').textContent = `(${list.length})`;
+  document.getElementById('pList').innerHTML = list.map(p => {
+    const isMe = p.profileId === myProfileId;
+    const init = (p.profileId || '').charAt(0).toUpperCase();
+    return `<div class="p-item">
+      <div class="p-avatar" style="background:${strColor(p.profileId)}">${init}</div>
+      <div style="font-size:13px">${p.profileId.slice(0,8)}${isMe ? ' (나)' : ''}</div>
+      <span class="p-role ${p.role === 'ADMIN' ? 'admin' : ''}">${p.role}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── STT 자막 ─────────────────────────────────────────────────────
+function addTranscript(msg) {
+  const area = document.getElementById('transcriptArea');
+  document.getElementById('transcriptHint')?.remove();
+  const isMe = msg.profileId === myProfileId;
+  const div = document.createElement('div');
+  div.className = 'seg' + (isMe ? ' me' : '') + (msg.isFinal === false ? ' partial' : '');
+  div.innerHTML = `<div class="who">${msg.speakerDisplay || msg.profileId?.slice(0,8) || '?'}</div>
+    <div class="text">${msg.text}</div>`;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+}
+
+// ── UI 유틸 ──────────────────────────────────────────────────────
+function dot(id, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'dot' + (cls ? ' ' + cls : '');
+}
+function log(msg, cls = '') {
+  const el = document.getElementById('logArea');
+  if (!el) return;
+  const t = new Date().toLocaleTimeString('ko', { hour12: false });
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = `[${t}] ${msg}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+function strColor(s) {
+  if (!s) return '#374151';
+  let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h},40%,30%)`;
+}
+
+// ── 초기화 (모든 함수 선언 이후 실행) ────────────────────────────
+window.addEventListener('DOMContentLoaded', function () {
+  LK = window.LivekitClient;
+  if (!LK) console.warn('[LiveKit] CDN 로드 실패 — window.LivekitClient 없음');
+
+  // ── 버튼 이벤트 바인딩 (CSP inline-handler 우회) ──────────────
+  document.getElementById('loginBtn').addEventListener('click', quickLogin);
+  document.getElementById('nicknameInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') quickLogin();
+  });
+  document.getElementById('btnCreate').addEventListener('click', createMeeting);
+  document.getElementById('btnJoin').addEventListener('click', joinWithCode);
+  document.getElementById('joinInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') joinWithCode();
+  });
+  document.getElementById('btnLogout').addEventListener('click', logout);
+  document.getElementById('btnCopyInvite').addEventListener('click', copyInvite);
+  document.getElementById('btnMic').addEventListener('click', toggleMic);
+  document.getElementById('btnStart').addEventListener('click', startMeeting);
+  document.getElementById('btnLeave').addEventListener('click', leaveMeeting);
+  document.getElementById('btnEnd').addEventListener('click', endMeeting);
+
+  // 닉네임 입력 시 UUID 미리보기
+  document.getElementById('nicknameInput').addEventListener('input', function () {
+    var nick = this.value.trim();
+    var stored = nick ? localStorage.getItem('nick_' + nick) : null;
+    document.getElementById('previewId').textContent =
+      stored ? stored.slice(0, 8) + '... (기존)' : nick ? '새 UUID 생성' : '';
+  });
+
+  // 마지막 닉네임 복원 → 바로 홈으로
+  var lastNick = localStorage.getItem('lastNick') || '';
+  if (lastNick) {
+    document.getElementById('nicknameInput').value = lastNick;
+    document.getElementById('previewId').textContent =
+      (localStorage.getItem('nick_' + lastNick) || '').slice(0, 8) + '...';
+    var pid = localStorage.getItem('nick_' + lastNick);
+    if (pid) { myProfileId = pid; myNickname = lastNick; showHome(); return; }
+  }
+  show('loginScreen');
+});
+</script>
+</body>
+</html>
