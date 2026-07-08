@@ -36,7 +36,6 @@ public class OnlineMeetingService {
                 .title(title)
                 .meetingType(MeetingType.group)
                 .status(MeetingStatus.PROCESSING)
-                .meetingDate(OffsetDateTime.now())
                 .inviteToken(token)
                 .build();
         meetingRepo.save(meeting);

@@ -65,14 +65,21 @@ public class AssemblyAiStreamingManager {
                 .map(p -> p.getDisplayName() != null ? p.getDisplayName() : profileId.substring(0, 8))
                 .orElse(profileId.substring(0, 8));
 
+        // 회의 시작 시각 기준 누적 오프셋: 재연결 시에도 타임스탬프가 리셋되지 않도록 보정
+        long sessionOffsetMs = meetingRepo.findById(UUID.fromString(meetingId))
+                .filter(m -> m.getMeetingDate() != null)
+                .map(m -> System.currentTimeMillis() - m.getMeetingDate().toInstant().toEpochMilli())
+                .orElse(0L);
+
         try {
             AssemblyAiStreamingSession session = new AssemblyAiStreamingSession(
                     props.getAssemblyai().getApiKey(),
                     16000,
+                    sessionOffsetMs,
                     t -> onFinal(meetingId, profileId, resolvedDisplay, t),
                     text -> onPartial(meetingId, profileId, resolvedDisplay, text)
             );
-            log.info("[StreamingMgr] 세션 생성 — meetingId={}, profileId={}", meetingId, profileId);
+            log.info("[StreamingMgr] 세션 생성 — meetingId={}, profileId={}, offsetMs={}", meetingId, profileId, sessionOffsetMs);
             return session;
         } catch (Exception e) {
             log.error("[StreamingMgr] 세션 생성 실패 — profileId={}: {}", profileId, e.getMessage());

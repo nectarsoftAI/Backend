@@ -86,12 +86,15 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
                 "role", role
         )));
 
+        Map<String, Object> roomInfo = new LinkedHashMap<>();
+        roomInfo.put("type", "room_info");
+        roomInfo.put("status", meeting.getStatus().name());
+        roomInfo.put("participants", new ArrayList<>(roomManager.getProfileIds(meetingId)));
+        if (meeting.getMeetingDate() != null) {
+            roomInfo.put("startedAt", meeting.getMeetingDate().toString());
+        }
         synchronized (session) {
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
-                    "type", "room_info",
-                    "status", meeting.getStatus().name(),
-                    "participants", new ArrayList<>(roomManager.getProfileIds(meetingId))
-            ))));
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(roomInfo)));
         }
 
         log.info("[OnlineWS] 연결 — meetingId={}, profileId={}, role={}", meetingId, profileId, role);
@@ -124,12 +127,18 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         switch (type) {
             case "start_meeting" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }
-                meetingRepo.findById(UUID.fromString(meetingId)).ifPresent(m -> {
+                Meeting m = meetingRepo.findById(UUID.fromString(meetingId)).orElse(null);
+                if (m != null) {
+                    OffsetDateTime startedAt = OffsetDateTime.now();
                     m.setStatus(MeetingStatus.LIVE);
+                    m.setMeetingDate(startedAt);
                     meetingRepo.save(m);
-                });
-                roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "meeting_started")));
-                log.info("[OnlineWS] 회의 시작 — meetingId={}", meetingId);
+                    roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
+                            "type", "meeting_started",
+                            "startedAt", startedAt.toString()
+                    )));
+                    log.info("[OnlineWS] 회의 시작 — meetingId={}, startedAt={}", meetingId, startedAt);
+                }
             }
             case "end_meeting" -> {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }

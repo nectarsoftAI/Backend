@@ -17,7 +17,6 @@ public class MeetAiProperties {
     private Openai openai = new Openai();
     private AssemblyAi assemblyai = new AssemblyAi();
     private Diarization diarization = new Diarization();
-    private Live live = new Live();
     private Llm llm = new Llm();
     private LiveKit livekit = new LiveKit();
 
@@ -78,13 +77,6 @@ public class MeetAiProperties {
     public static class Diarization {
         private int minSpeakers = 1;
         private int maxSpeakers = 10;
-    }
-
-    @Data
-    public static class Live {
-        private double chunkMinDurationSec = 0.5;
-        private double chunkMaxSilenceRatio = 0.7;
-        private int chunkExpectedSampleRate = 16000;
     }
 
     @Data
