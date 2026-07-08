@@ -61,7 +61,9 @@ public class LiveKitTokenController {
         return Jwts.builder()
                 .issuer(lk.getApiKey())
                 .subject(identity)
+                .id(UUID.randomUUID().toString())
                 .issuedAt(new Date(now))
+                .notBefore(new Date(now))
                 .expiration(new Date(now + 6 * 3600 * 1000L))  // 6시간
                 .claim("video", Map.of(
                         "roomJoin", true,
