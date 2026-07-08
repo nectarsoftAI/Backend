@@ -106,11 +106,11 @@ body { font-family: 'Segoe UI', sans-serif; background: #111827; color: #f3f4f6;
 <!-- ── 로그인 ── -->
 <div id="loginScreen" class="screen active">
   <h1>MeetAI LiveKit 테스트</h1>
-  <p style="color:#6b7280;font-size:14px">닉네임을 입력하면 테스트용 UUID가 자동 생성됩니다</p>
-  <input id="nicknameInput" class="input" type="text" placeholder="닉네임 (예: 마크, 테스터1)"/>
+  <p style="color:#6b7280;font-size:14px">Supabase 계정으로 로그인하세요</p>
+  <input id="emailInput" class="input" type="email" placeholder="이메일"/>
+  <input id="pwInput" class="input" type="password" placeholder="비밀번호"/>
   <div id="loginErr" class="err"></div>
-  <button id="loginBtn" class="btn btn-blue">입장</button>
-  <p style="color:#374151;font-size:11px;margin-top:8px">Profile ID: <span id="previewId" style="color:#4b5563;font-family:monospace"></span></p>
+  <button id="loginBtn" class="btn btn-blue">로그인</button>
 </div>
 
 <!-- ── 홈 ── -->
@@ -170,12 +170,14 @@ body { font-family: 'Segoe UI', sans-serif; background: #111827; color: #f3f4f6;
 
 <script>
 // ── 설정 ───────────────────────────────────────────────────────────
-var BASE    = 'https://backend-production-894a3.up.railway.app';
-var WS_BASE = 'wss://backend-production-894a3.up.railway.app';
+var BASE       = 'https://backend-production-894a3.up.railway.app';
+var WS_BASE    = 'wss://backend-production-894a3.up.railway.app';
+var SUPA_URL   = 'https://gpnhfwtbmtvnexbxvdqi.supabase.co';
+var SUPA_ANON  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwbmhmd3RibXR2bmV4Ynh2ZHFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDQ5MDksImV4cCI6MjA5NzE4MDkwOX0._lDmOG5CKrF0nFt_OMxROxyps-SoL57bo8n21pYUDf0';
 
 // ── 상태 (var: TDZ 없음) ───────────────────────────────────────────
 var myProfileId    = '';
-var myNickname     = '';
+var myEmail        = '';
 var meetingId      = '';
 var inviteToken    = '';
 var ws             = null;
@@ -184,39 +186,45 @@ var sttRecorder    = null;
 var micOn          = false;
 var participants   = {};
 var lkParticipants = {};
-var LK             = null;  // window.LivekitClient — DOMContentLoaded 후 할당
+var LK             = null;
 
-// ── UUID 생성 ─────────────────────────────────────────────────────
-function genUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-  });
-}
-
-// ── 로그인 (닉네임 → UUID 자동 생성) ─────────────────────────────
-function quickLogin() {
-  var nick = (document.getElementById('nicknameInput').value || '').trim();
-  var err  = document.getElementById('loginErr');
-  if (!nick) { err.textContent = '닉네임을 입력하세요.'; err.style.display = 'block'; return; }
+// ── 로그인 ────────────────────────────────────────────────────────
+async function login() {
+  var email = document.getElementById('emailInput').value.trim();
+  var pw    = document.getElementById('pwInput').value;
+  var err   = document.getElementById('loginErr');
+  var btn   = document.getElementById('loginBtn');
+  if (!email || !pw) { err.textContent = '이메일과 비밀번호를 입력하세요.'; err.style.display = 'block'; return; }
   err.style.display = 'none';
-
-  // 같은 닉네임은 같은 UUID 재사용 (localStorage에 저장)
-  var stored = localStorage.getItem('nick_' + nick);
-  myProfileId = stored || genUUID();
-  myNickname  = nick;
-  localStorage.setItem('nick_' + nick, myProfileId);
-  localStorage.setItem('lastNick', nick);
-  showHome();
+  btn.textContent = '로그인 중...'; btn.disabled = true;
+  try {
+    var res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'apikey': SUPA_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: pw })
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error_description || data.msg || '로그인 실패');
+    myProfileId = data.user.id;
+    myEmail     = data.user.email;
+    localStorage.setItem('profileId', myProfileId);
+    localStorage.setItem('email', myEmail);
+    showHome();
+  } catch(e) {
+    err.textContent = e.message; err.style.display = 'block';
+  } finally {
+    btn.textContent = '로그인'; btn.disabled = false;
+  }
 }
 
 function logout() {
-  myProfileId = ''; myNickname = '';
+  myProfileId = ''; myEmail = '';
+  localStorage.removeItem('profileId'); localStorage.removeItem('email');
   show('loginScreen');
 }
 
 function showHome() {
-  document.getElementById('homeEmail').textContent = myNickname + ' (' + myProfileId.slice(0,8) + '...)';
+  document.getElementById('homeEmail').textContent = myEmail + ' (' + myProfileId.slice(0,8) + '...)';
   show('homeScreen');
 }
 
@@ -541,10 +549,13 @@ window.addEventListener('DOMContentLoaded', function () {
   LK = window.LivekitClient;
   if (!LK) console.warn('[LiveKit] CDN 로드 실패 — window.LivekitClient 없음');
 
-  // ── 버튼 이벤트 바인딩 (CSP inline-handler 우회) ──────────────
-  document.getElementById('loginBtn').addEventListener('click', quickLogin);
-  document.getElementById('nicknameInput').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') quickLogin();
+  // ── 버튼 이벤트 바인딩 ────────────────────────────────────────
+  document.getElementById('loginBtn').addEventListener('click', login);
+  document.getElementById('emailInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('pwInput').focus();
+  });
+  document.getElementById('pwInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') login();
   });
   document.getElementById('btnCreate').addEventListener('click', createMeeting);
   document.getElementById('btnJoin').addEventListener('click', joinWithCode);
@@ -558,24 +569,15 @@ window.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btnLeave').addEventListener('click', leaveMeeting);
   document.getElementById('btnEnd').addEventListener('click', endMeeting);
 
-  // 닉네임 입력 시 UUID 미리보기
-  document.getElementById('nicknameInput').addEventListener('input', function () {
-    var nick = this.value.trim();
-    var stored = nick ? localStorage.getItem('nick_' + nick) : null;
-    document.getElementById('previewId').textContent =
-      stored ? stored.slice(0, 8) + '... (기존)' : nick ? '새 UUID 생성' : '';
-  });
-
-  // 마지막 닉네임 복원 → 바로 홈으로
-  var lastNick = localStorage.getItem('lastNick') || '';
-  if (lastNick) {
-    document.getElementById('nicknameInput').value = lastNick;
-    document.getElementById('previewId').textContent =
-      (localStorage.getItem('nick_' + lastNick) || '').slice(0, 8) + '...';
-    var pid = localStorage.getItem('nick_' + lastNick);
-    if (pid) { myProfileId = pid; myNickname = lastNick; showHome(); return; }
+  // 이전 로그인 세션 복원
+  var savedId    = localStorage.getItem('profileId') || '';
+  var savedEmail = localStorage.getItem('email') || '';
+  if (savedId && savedEmail) {
+    myProfileId = savedId; myEmail = savedEmail;
+    showHome();
+  } else {
+    show('loginScreen');
   }
-  show('loginScreen');
 });
 </script>
 </body>
