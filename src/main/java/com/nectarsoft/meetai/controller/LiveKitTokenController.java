@@ -72,7 +72,7 @@ public class LiveKitTokenController {
                         "canSubscribe", true,
                         "canPublishData", true
                 ))
-                .signWith(key)
+                .signWith(key, Jwts.SIG.HS256)
                 .compact();
     }
 }
