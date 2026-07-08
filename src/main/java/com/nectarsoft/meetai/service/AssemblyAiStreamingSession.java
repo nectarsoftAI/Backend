@@ -33,12 +33,16 @@ public class AssemblyAiStreamingSession {
     private final Queue<byte[]> earlyBuffer = new ConcurrentLinkedQueue<>();
     private volatile boolean sessionReady = false;
     private volatile boolean closed = false;
+    // AssemblyAI audio_start/audio_end는 이 세션 열린 시점 기준 ms이므로
+    // 회의 시작 시각 기준 누적 시간으로 보정하기 위한 오프셋
+    private final long sessionOffsetMs;
 
-    public AssemblyAiStreamingSession(String apiKey, int sampleRate,
+    public AssemblyAiStreamingSession(String apiKey, int sampleRate, long sessionOffsetMs,
                                       Consumer<Transcript> onFinal,
                                       Consumer<String> onPartial) throws Exception {
         this.onFinal = onFinal;
         this.onPartial = onPartial;
+        this.sessionOffsetMs = sessionOffsetMs;
 
         URI uri = URI.create(WS_URL + "?sample_rate=" + sampleRate + "&language_code=ko");
         this.webSocket = HttpClient.newHttpClient()
@@ -105,8 +109,8 @@ public class AssemblyAiStreamingSession {
                     case "FinalTranscript" -> {
                         String text = node.path("text").asText("").trim();
                         if (!text.isEmpty()) {
-                            double startSec = node.path("audio_start").asLong(0) / 1000.0;
-                            double endSec   = node.path("audio_end").asLong(0)   / 1000.0;
+                            double startSec = (node.path("audio_start").asLong(0) + sessionOffsetMs) / 1000.0;
+                            double endSec   = (node.path("audio_end").asLong(0)   + sessionOffsetMs) / 1000.0;
                             onFinal.accept(new Transcript(text, startSec, endSec));
                         }
                     }
