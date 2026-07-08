@@ -377,12 +377,14 @@ async function connectLiveKit() {
     // 로컬 참여자 타일 추가
     addLkTile(room.localParticipant.identity, true);
 
-    // 이미 방에 있는 리모트 참여자 처리
-    room.remoteParticipants.forEach((p) => {
+    // 이미 방에 있는 리모트 참여자 처리 (v1: room.participants / v2: room.remoteParticipants)
+    var remotes = room.remoteParticipants || room.participants;
+    remotes.forEach((p) => {
       lkParticipants[p.identity] = p;
       addLkTile(p.identity, false);
       log(`[LiveKit] 기존 참여자 — ${p.identity}`);
-      p.audioTrackPublications.forEach(pub => {
+      var pubs = p.audioTrackPublications || p.audioTracks; // v2 || v1
+      pubs.forEach(pub => {
         if (pub.track) {
           const el = pub.track.attach();
           el.autoplay = true;
@@ -411,8 +413,11 @@ async function toggleMic() {
       document.getElementById('btnMic').className = 'btn-icon active';
       log('[LiveKit] 마이크 ON');
 
-      // 같은 트랙으로 STT용 MediaRecorder 생성
-      const pub = room.localParticipant.getTrackPublication(LK.Track.Source.Microphone);
+      // 같은 트랙으로 STT용 MediaRecorder 생성 (v2: getTrackPublication / v1: getTrack)
+      const lp = room.localParticipant;
+      const pub = lp.getTrackPublication
+                ? lp.getTrackPublication(LK.Track.Source.Microphone)
+                : lp.getTrack(LK.Track.Source.Microphone);
       const mst = pub?.track?.mediaStreamTrack;
       if (mst) {
         const stream = new MediaStream([mst]);

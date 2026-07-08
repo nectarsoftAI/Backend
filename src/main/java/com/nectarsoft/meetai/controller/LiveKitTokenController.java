@@ -34,14 +34,29 @@ public class LiveKitTokenController {
             @RequestParam String profileId,
             @RequestParam(required = false) String token) {
 
+        log.info("[LiveKit] 토큰 요청 수신 — meetingId={}, profileId={}", meetingId, profileId);
+
+        MeetAiProperties.LiveKit lk = props.getLivekit();
+        if (lk.getApiKey().isBlank() || lk.getApiSecret().isBlank() || lk.getUrl().isBlank()) {
+            log.error("[LiveKit] 환경변수 누락 — LIVEKIT_API_KEY={}, LIVEKIT_API_SECRET={}, LIVEKIT_URL={}",
+                    lk.getApiKey().isBlank() ? "없음" : "OK",
+                    lk.getApiSecret().isBlank() ? "없음" : "OK",
+                    lk.getUrl().isBlank() ? "없음" : "OK");
+            return ResponseEntity.status(500).body(Map.of("error", "LiveKit env vars not configured"));
+        }
+
         var meeting = meetingRepo.findById(UUID.fromString(meetingId)).orElse(null);
-        if (meeting == null) return ResponseEntity.notFound().build();
+        if (meeting == null) {
+            log.warn("[LiveKit] 토큰 거절 — 회의 없음: meetingId={}", meetingId);
+            return ResponseEntity.notFound().build();
+        }
 
         UUID pId = UUID.fromString(profileId);
         boolean isAdmin = pId.equals(meeting.getUserId());
 
         // 게스트 토큰 검증
         if (!isAdmin && (token == null || !token.equalsIgnoreCase(meeting.getInviteToken()))) {
+            log.warn("[LiveKit] 토큰 거절 — 초대 토큰 불일치: meetingId={}, profileId={}", meetingId, profileId);
             return ResponseEntity.status(403).build();
         }
 
