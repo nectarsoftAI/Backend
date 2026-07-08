@@ -44,7 +44,7 @@ public class AssemblyAiStreamingSession {
         this.onPartial = onPartial;
         this.sessionOffsetMs = sessionOffsetMs;
 
-        URI uri = URI.create(WS_URL + "?sample_rate=" + sampleRate + "&language_code=ko");
+        URI uri = URI.create(WS_URL + "?sample_rate=" + sampleRate + "&language_code=multi");
         this.webSocket = HttpClient.newHttpClient()
                 .newWebSocketBuilder()
                 .header("Authorization", apiKey)
@@ -95,7 +95,10 @@ public class AssemblyAiStreamingSession {
         private void handleMessage(String raw) {
             try {
                 JsonNode node = MAPPER.readTree(raw);
-                String type = node.path("message_type").asText("");
+                // v3 API는 "type" 필드 사용, v2 호환을 위해 fallback
+                String type = node.has("message_type")
+                        ? node.path("message_type").asText("")
+                        : node.path("type").asText("");
                 switch (type) {
                     case "SessionBegins" -> {
                         sessionReady = true;
@@ -114,8 +117,11 @@ public class AssemblyAiStreamingSession {
                             onFinal.accept(new Transcript(text, startSec, endSec));
                         }
                     }
-                    case "SessionTerminated" ->
+                    case "SessionTerminated", "session_terminated" ->
                             log.info("[AssemblyAI Stream] 세션 종료");
+                    case "Error" ->
+                            log.error("[AssemblyAI Stream] 서버 오류 — code={}, msg={}",
+                                    node.path("error_code").asText(), node.path("error").asText());
                     default ->
                             log.warn("[AssemblyAI Stream] 알 수 없는 메시지 타입: {} / raw={}", type, raw);
                 }
