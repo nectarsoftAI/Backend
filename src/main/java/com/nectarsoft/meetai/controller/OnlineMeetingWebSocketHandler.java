@@ -19,11 +19,14 @@ import java.nio.ByteBuffer;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.*;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
+
+    private static final long AUTO_END_DELAY_SECONDS = 60L;
 
     private final OnlineRoomManager roomManager;
     private final MeetingRepository meetingRepo;
@@ -32,6 +35,10 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
     private final LlmService llmService;
     private final AssemblyAiStreamingManager streamingManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // 참여자 전원 퇴장 시 즉시 종료하지 않고 60초 유예 — 네트워크 순단 재연결 허용
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> pendingEnds = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -80,6 +87,14 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         roomManager.join(meetingId, profileId, session);
+
+        // 재연결 감지 — 예약된 자동 종료 취소
+        ScheduledFuture<?> pending = pendingEnds.remove(meetingId);
+        if (pending != null) {
+            pending.cancel(false);
+            log.info("[OnlineWS] 자동 종료 취소 — 재연결 감지, meetingId={}", meetingId);
+        }
+
         roomManager.broadcastExcept(meetingId, profileId, objectMapper.writeValueAsString(Map.of(
                 "type", "participant_joined",
                 "profileId", profileId,
@@ -177,8 +192,13 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         log.info("[OnlineWS] 연결 종료 — meetingId={}, profileId={}, status={}", meetingId, profileId, status);
 
         if (roomManager.getProfileIds(meetingId).isEmpty()) {
-            log.info("[OnlineWS] 모든 참여자 퇴장 — 회의 자동 종료 meetingId={}", meetingId);
-            endMeeting(meetingId);
+            ScheduledFuture<?> future = scheduler.schedule(
+                    () -> endMeeting(meetingId),
+                    AUTO_END_DELAY_SECONDS, TimeUnit.SECONDS
+            );
+            pendingEnds.put(meetingId, future);
+            log.info("[OnlineWS] 참여자 전원 퇴장 — {}초 후 자동 종료 예약, meetingId={}",
+                    AUTO_END_DELAY_SECONDS, meetingId);
         }
     }
 
@@ -191,6 +211,9 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         UUID mid = UUID.fromString(meetingId);
         Meeting meeting = meetingRepo.findById(mid).orElse(null);
         if (meeting == null || meeting.getStatus() == MeetingStatus.COMPLETED) return;
+
+        ScheduledFuture<?> pending = pendingEnds.remove(meetingId);
+        if (pending != null) pending.cancel(false);
 
         if (meeting.getMeetingDate() != null) {
             meeting.setDurationSeconds((int) ChronoUnit.SECONDS.between(meeting.getMeetingDate(), OffsetDateTime.now()));
