@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
 <title>MeetAI LiveKit 통합 테스트</title>
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@1/dist/livekit-client.umd.min.js"></script>
 <style>
@@ -183,6 +184,8 @@ var inviteToken    = '';
 var ws             = null;
 var room           = null;
 var sttRecorder    = null;
+var sttStream      = null;
+var sttTimer       = null;
 var micOn          = false;
 var participants   = {};
 var lkParticipants = {};
@@ -443,23 +446,35 @@ async function toggleMic() {
 }
 
 function startSttRecorder(stream) {
-  const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  sttRecorder = new MediaRecorder(stream, { mimeType: mime });
-  sttRecorder.ondataavailable = async (e) => {
-    if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
-      ws.send(await e.data.arrayBuffer());
-      log(`[STT] ${(e.data.size/1024).toFixed(1)}KB 전송`, 'tx');
-    }
-  };
-  sttRecorder.start(5000);  // 5초 단위 전송 (Whisper flush 간격과 맞춤)
-  log('[STT] 녹음 시작 (5초 단위)', 'tx');
+  sttStream = stream;
+  recordSttSegment();
+  log('[STT] 녹음 시작 (5초 세그먼트)', 'tx');
 
   // 로컬 타일 마이크 아이콘 업데이트
   const tile = document.getElementById('tile_' + (room?.localParticipant?.identity || ''));
   if (tile) tile.querySelector('.mic-icon').textContent = '🎙';
 }
 
+// 5초마다 레코더를 재시작해서 매번 헤더 포함 완결 webm 파일을 전송
+// (timeslice 방식은 첫 조각 이후 헤더가 없어 Whisper가 해석 불가)
+function recordSttSegment() {
+  if (!sttStream) return;
+  var mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  sttRecorder = new MediaRecorder(sttStream, { mimeType: mime });
+  sttRecorder.ondataavailable = async (e) => {
+    if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+      ws.send(await e.data.arrayBuffer());
+      log(`[STT] ${(e.data.size/1024).toFixed(1)}KB 전송`, 'tx');
+    }
+  };
+  sttRecorder.onstop = () => { if (sttStream) recordSttSegment(); };
+  sttRecorder.start();
+  sttTimer = setTimeout(function() { try { sttRecorder.stop(); } catch(_) {} }, 5000);
+}
+
 function stopSttRecorder() {
+  clearTimeout(sttTimer); sttTimer = null;
+  sttStream = null;
   if (!sttRecorder) return;
   try { sttRecorder.stop(); } catch(_) {}
   sttRecorder = null;

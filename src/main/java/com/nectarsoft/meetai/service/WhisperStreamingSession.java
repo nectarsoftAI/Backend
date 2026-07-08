@@ -65,10 +65,39 @@ public class WhisperStreamingSession {
         log.info("[Whisper] 세션 시작 — offsetMs={}", sessionOffsetMs);
     }
 
-    public void sendAudio(byte[] pcm) {
+    public void sendAudio(byte[] data) {
         if (closed) return;
+        // MediaRecorder가 보내는 webm/ogg 세그먼트는 자체 완결 파일 — 버퍼링 없이 즉시 변환
+        if (isContainerFormat(data)) {
+            long endMs = System.currentTimeMillis();
+            scheduler.execute(() -> transcribeSegment(data, endMs));
+            return;
+        }
         synchronized (audioBuffer) {
-            audioBuffer.write(pcm, 0, pcm.length);
+            audioBuffer.write(data, 0, data.length);
+        }
+    }
+
+    private static boolean isContainerFormat(byte[] d) {
+        if (d.length < 4) return false;
+        // webm(EBML): 1A 45 DF A3 / ogg: "OggS"
+        return ((d[0] & 0xFF) == 0x1A && (d[1] & 0xFF) == 0x45
+                && (d[2] & 0xFF) == 0xDF && (d[3] & 0xFF) == 0xA3)
+                || (d[0] == 'O' && d[1] == 'g' && d[2] == 'g' && d[3] == 'S');
+    }
+
+    private void transcribeSegment(byte[] webm, long endMs) {
+        try {
+            String text = transcribe(webm, "audio.webm");
+            if (text != null && !text.isBlank()) {
+                double endSec   = (endMs - meetingStartMs) / 1000.0;
+                double startSec = Math.max(0, endSec - FLUSH_INTERVAL_SEC);
+                onFinal.accept(new Transcript(text.trim(), startSec, endSec));
+                log.info("[Whisper] webm 변환 완료 — [{}-{}s] \"{}\"",
+                        String.format("%.1f", startSec), String.format("%.1f", endSec), text.trim());
+            }
+        } catch (Exception e) {
+            log.error("[Whisper] webm 변환 실패: {}", e.getMessage());
         }
     }
 
@@ -96,7 +125,7 @@ public class WhisperStreamingSession {
 
         try {
             byte[] wav = toWav(pcm);
-            String text = transcribe(wav);
+            String text = transcribe(wav, "audio.wav");
             if (text != null && !text.isBlank()) {
                 double startSec = Math.max(0, (startMs - meetingStartMs) / 1000.0);
                 double endSec   = (System.currentTimeMillis() - meetingStartMs) / 1000.0;
@@ -110,10 +139,10 @@ public class WhisperStreamingSession {
     }
 
     @SuppressWarnings("unchecked")
-    private String transcribe(byte[] wav) {
+    private String transcribe(byte[] audio, String filename) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("file", new ByteArrayResource(wav) {
-            @Override public String getFilename() { return "audio.wav"; }
+        body.add("file", new ByteArrayResource(audio) {
+            @Override public String getFilename() { return filename; }
         });
         body.add("model", model);
         body.add("language", language);
