@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -11,7 +12,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -157,17 +157,27 @@ public class RealtimeSttSession implements SttStreamSession {
         log.info("[Realtime] ffmpeg 스트림 디코더 시작 — container={}", container);
     }
 
-    /** ffmpeg stdout(24kHz PCM)을 읽어 Realtime WS로 즉시 전송 */
+    /** ffmpeg stdout(24kHz PCM)을 읽어 Realtime WS로 전송 — 250ms 배치로 왕복 지연 누적 방지 */
     private void pumpPcm() {
+        final int BATCH_BYTES = 12_000; // 250ms @ 24kHz 16-bit mono
         try (InputStream out = ffmpeg.getInputStream()) {
-            byte[] buf = new byte[4800]; // 100ms @ 24kHz 16-bit mono
+            byte[] buf = new byte[4800];
+            ByteArrayOutputStream acc = new ByteArrayOutputStream();
             int n;
             while ((n = out.read(buf)) != -1) {
                 if (closed) break;
-                byte[] chunk = (n == buf.length) ? buf : Arrays.copyOf(buf, n);
+                acc.write(buf, 0, n);
+                if (acc.size() >= BATCH_BYTES) {
+                    sendJson(Map.of(
+                            "type", "input_audio_buffer.append",
+                            "audio", Base64.getEncoder().encodeToString(acc.toByteArray())));
+                    acc.reset();
+                }
+            }
+            if (acc.size() > 0 && !closed) {
                 sendJson(Map.of(
                         "type", "input_audio_buffer.append",
-                        "audio", Base64.getEncoder().encodeToString(chunk)));
+                        "audio", Base64.getEncoder().encodeToString(acc.toByteArray())));
             }
         } catch (Exception e) {
             if (!closed) log.error("[Realtime] PCM 펌프 종료: {}", e.getMessage());
