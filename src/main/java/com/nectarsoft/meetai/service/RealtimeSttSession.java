@@ -31,6 +31,8 @@ import java.util.regex.Pattern;
 @Slf4j
 public class RealtimeSttSession implements SttStreamSession {
 
+    // GA 프로토콜 (실측 검증): intent=transcription + 베타 헤더 없이 접속, 설정은 session.update로.
+    // 주의: OpenAI-Beta 헤더를 붙이면 beta_api_shape_disabled로 거부됨
     private static final String REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -80,24 +82,27 @@ public class RealtimeSttSession implements SttStreamSession {
     private WebSocket connectWs() {
         return HttpClient.newHttpClient().newWebSocketBuilder()
                 .header("Authorization", "Bearer " + apiKey)
-                .header("OpenAI-Beta", "realtime=v1")
                 .buildAsync(URI.create(REALTIME_URL), new Listener())
                 .join();
     }
 
+    /** GA 프로토콜: session.update + session.type=transcription, 전사 모델은 audio.input.transcription */
     private void sendSessionConfig() {
         sendJson(Map.of(
-                "type", "transcription_session.update",
+                "type", "session.update",
                 "session", Map.of(
-                        "input_audio_format", "pcm16",
-                        "input_audio_transcription", Map.of(
-                                "model", model,
-                                "language", language),
-                        "turn_detection", Map.of(
-                                "type", "server_vad",
-                                "threshold", 0.5,
-                                "prefix_padding_ms", 300,
-                                "silence_duration_ms", 500))));
+                        "type", "transcription",
+                        "audio", Map.of(
+                                "input", Map.of(
+                                        "format", Map.of("type", "audio/pcm", "rate", 24000),
+                                        "transcription", Map.of(
+                                                "model", model,
+                                                "language", language),
+                                        "turn_detection", Map.of(
+                                                "type", "server_vad",
+                                                "threshold", 0.5,
+                                                "prefix_padding_ms", 300,
+                                                "silence_duration_ms", 500))))));
     }
 
     // ── 오디오 입력: WS 청크 → ffmpeg stdin ─────────────────────────
@@ -258,8 +263,10 @@ public class RealtimeSttSession implements SttStreamSession {
                 }
                 case "error" ->
                         log.error("[Realtime] 서버 오류: {}", node.path("error").path("message").asText(raw));
-                case "transcription_session.created", "transcription_session.updated",
-                     "input_audio_buffer.committed", "conversation.item.created" -> { /* 무시 */ }
+                case "session.created", "session.updated",
+                     "transcription_session.created", "transcription_session.updated",
+                     "input_audio_buffer.committed", "conversation.item.created",
+                     "conversation.item.added", "conversation.item.done" -> { /* 무시 */ }
                 default -> log.debug("[Realtime] 이벤트: {}", type);
             }
         } catch (Exception e) {
