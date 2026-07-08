@@ -24,7 +24,7 @@ public class AssemblyAiStreamingSession {
 
     public record Transcript(String text, double startSec, double endSec) {}
 
-    private static final String WS_URL = "wss://api.assemblyai.com/v2/realtime/ws";
+    private static final String WS_URL = "wss://streaming.assemblyai.com/v3/ws";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final WebSocket webSocket;
@@ -117,7 +117,7 @@ public class AssemblyAiStreamingSession {
                     case "SessionTerminated" ->
                             log.info("[AssemblyAI Stream] 세션 종료");
                     default ->
-                            log.debug("[AssemblyAI Stream] 수신: {}", type);
+                            log.warn("[AssemblyAI Stream] 알 수 없는 메시지 타입: {} / raw={}", type, raw);
                 }
             } catch (Exception e) {
                 log.warn("[AssemblyAI Stream] 메시지 파싱 오류: {}", e.getMessage());
