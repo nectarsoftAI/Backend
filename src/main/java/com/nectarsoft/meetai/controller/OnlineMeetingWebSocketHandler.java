@@ -135,7 +135,10 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
                 if (!isAdmin(meetingId, profileId)) { sendError(session, "권한이 없습니다."); return; }
                 Meeting m = meetingRepo.findById(UUID.fromString(meetingId)).orElse(null);
                 if (m != null) {
-                    OffsetDateTime startedAt = OffsetDateTime.now();
+                    // 재입장/재시작 시 원래 시작 시각 유지 — 최초 시작 때만 현재 시각 기록
+                    // (덮어쓰면 경과 시간·자막 타임스탬프가 전부 리셋됨)
+                    OffsetDateTime startedAt = m.getMeetingDate() != null
+                            ? m.getMeetingDate() : OffsetDateTime.now();
                     m.setStatus(MeetingStatus.LIVE);
                     m.setMeetingDate(startedAt);
                     meetingRepo.save(m);

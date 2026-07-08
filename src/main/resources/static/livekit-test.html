@@ -138,6 +138,7 @@ body { font-family: 'Segoe UI', sans-serif; background: #111827; color: #f3f4f6;
         <span class="dot" id="lkDot" title="LiveKit WebRTC"></span> LiveKit
         &nbsp;·&nbsp;
         <span id="meetingIdLabel" style="color:#4b5563;font-size:11px"></span>
+        <span id="meetingTimer" style="color:#f87171;font-size:11px;font-weight:600"></span>
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
@@ -189,6 +190,8 @@ var micOn          = false;
 var participants   = {};
 var lkParticipants = {};
 var LK             = null;
+var meetingClockInt = null;
+var pendingInvite   = null;  // URL ?invite=meetingId:token 자동 입장용
 
 // ── 로그인 ────────────────────────────────────────────────────────
 async function login() {
@@ -211,7 +214,7 @@ async function login() {
     myEmail     = data.user.email;
     localStorage.setItem('profileId', myProfileId);
     localStorage.setItem('email', myEmail);
-    showHome();
+    if (!joinFromInviteUrl()) showHome();  // 초대 링크로 왔으면 로그인 직후 자동 입장
   } catch(e) {
     err.textContent = e.message; err.style.display = 'block';
   } finally {
@@ -252,6 +255,17 @@ async function createMeeting() {
     const data = await res.json();
     enterMeeting(data.meetingId, data.token);
   } catch(e) { alert('회의 생성 실패: ' + e.message); }
+}
+
+// URL ?invite=meetingId:token — 로그인된 상태면 게스트로 자동 입장
+function joinFromInviteUrl() {
+  if (!pendingInvite) return false;
+  var code = pendingInvite;
+  pendingInvite = null;
+  var idx = code.indexOf(':');
+  if (idx < 0) return false;
+  enterMeeting(code.slice(0, idx).trim(), code.slice(idx + 1).trim());
+  return true;
 }
 
 function joinWithCode() {
@@ -307,11 +321,16 @@ function handleSignal(msg) {
       var isAdmin = msg.role === 'ADMIN';
       document.getElementById('btnStart').style.display = isAdmin ? '' : 'none';
       document.getElementById('btnEnd').style.display   = isAdmin ? '' : 'none';
+      // 재입장 시 원래 시작 시각 기준으로 경과 시간 재계산
+      if (msg.startedAt) setMeetingClock(msg.startedAt);
       (msg.participants || []).forEach(p => addParticipant(p.profileId || p, p.role));
       break;
     case 'participant_joined': addParticipant(msg.profileId, msg.role); break;
     case 'participant_left':   removeParticipant(msg.profileId); break;
-    case 'meeting_started':    log('[회의] 시작됨 🔴', 'tx'); break;
+    case 'meeting_started':
+      log('[회의] 시작됨 🔴', 'tx');
+      if (msg.startedAt) setMeetingClock(msg.startedAt);
+      break;
     case 'meeting_ended':      log('[회의] 종료됨', 'warn'); leaveMeeting(); break;
     case 'kicked':             alert('강퇴되었습니다.'); leaveMeeting(); break;
     case 'transcript':         addTranscript(msg); break;
@@ -481,15 +500,40 @@ function endMeeting()   { signal({ type: 'end_meeting' }); }
 
 async function leaveMeeting() {
   stopSttRecorder();
+  clearMeetingClock();
   if (room) { try { await room.disconnect(); } catch(_) {} room = null; }
   if (ws)   { ws.close(); ws = null; }
   micOn = false;
   showHome();
 }
 
+// 초대 링크: URL로 접속하면 로그인된 게스트는 자동 입장
 function copyInvite() {
-  const code = `${meetingId}:${inviteToken}`;
-  navigator.clipboard.writeText(code).then(() => alert('복사됨!\n' + code));
+  const url = location.origin + location.pathname + '?invite=' + encodeURIComponent(meetingId + ':' + inviteToken);
+  navigator.clipboard.writeText(url).then(() => alert('초대 링크 복사됨!\n' + url));
+}
+
+// ── 회의 경과 시간 (원래 시작 시각 기준) ─────────────────────────
+function setMeetingClock(startedAtIso) {
+  var startMs = Date.parse(startedAtIso);
+  if (!startMs) return;
+  clearInterval(meetingClockInt);
+  var el = document.getElementById('meetingTimer');
+  function tick() {
+    var s = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+    el.textContent = '🔴 ' + String(Math.floor(s / 3600)).padStart(2, '0')
+        + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0')
+        + ':' + String(s % 60).padStart(2, '0');
+  }
+  tick();
+  meetingClockInt = setInterval(tick, 1000);
+}
+
+function clearMeetingClock() {
+  clearInterval(meetingClockInt);
+  meetingClockInt = null;
+  var el = document.getElementById('meetingTimer');
+  if (el) el.textContent = '';
 }
 
 // ── 참여자 타일 (LiveKit) ─────────────────────────────────────────
@@ -611,14 +655,18 @@ window.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btnLeave').addEventListener('click', leaveMeeting);
   document.getElementById('btnEnd').addEventListener('click', endMeeting);
 
+  // URL 초대 링크 파싱 (?invite=meetingId:token)
+  pendingInvite = new URLSearchParams(location.search).get('invite');
+
   // 이전 로그인 세션 복원
   var savedId    = localStorage.getItem('profileId') || '';
   var savedEmail = localStorage.getItem('email') || '';
   if (savedId && savedEmail) {
     myProfileId = savedId; myEmail = savedEmail;
-    showHome();
+    // 초대 링크로 접속 + 이미 로그인 → 게스트로 바로 입장
+    if (!joinFromInviteUrl()) showHome();
   } else {
-    show('loginScreen');
+    show('loginScreen');  // 로그인 완료 시 joinFromInviteUrl()이 자동 입장 처리
   }
 });
 </script>
