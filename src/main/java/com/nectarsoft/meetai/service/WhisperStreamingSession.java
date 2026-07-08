@@ -26,7 +26,7 @@ import java.util.regex.Pattern;
  * - 한국어(ko) 지원
  */
 @Slf4j
-public class WhisperStreamingSession {
+public class WhisperStreamingSession implements SttStreamSession {
 
     public record Transcript(String text, double startSec, double endSec) {}
 
@@ -105,6 +105,7 @@ public class WhisperStreamingSession {
     // 미처리 클러스터 누적 버퍼 — flush 시 클러스터 경계에 맞춰 잘라 init과 결합
     private final ByteArrayOutputStream webmClusterBuf = new ByteArrayOutputStream();
 
+    @Override
     public void sendAudio(byte[] data) {
         if (closed) return;
         long endMs = System.currentTimeMillis();
@@ -300,6 +301,7 @@ public class WhisperStreamingSession {
         }
     }
 
+    @Override
     public void close() {
         if (closed) return;
         closed = true;

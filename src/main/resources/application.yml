@@ -28,6 +28,8 @@ meetai:
     api-key: ${OPENAI_API_KEY}
     whisper-model: whisper-1
     whisper-language: ko
+    # 실시간(말하는 중) 자막 — OpenAI Realtime API
+    realtime-model: ${OPENAI_REALTIME_MODEL:gpt-4o-transcribe}
 
   assemblyai:
     api-key: ${ASSEMBLYAI_API_KEY:}

@@ -33,7 +33,7 @@ public class AssemblyAiStreamingManager {
     private final ObjectMapper objectMapper;
 
     // key: "meetingId:profileId"
-    private final ConcurrentHashMap<String, WhisperStreamingSession> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, SttStreamSession> sessions = new ConcurrentHashMap<>();
 
     public void sendAudio(String meetingId, String profileId, byte[] pcm) {
         sessions.computeIfAbsent(key(meetingId, profileId), k -> createSession(meetingId, profileId))
@@ -41,7 +41,7 @@ public class AssemblyAiStreamingManager {
     }
 
     public void endSession(String meetingId, String profileId) {
-        WhisperStreamingSession s = sessions.remove(key(meetingId, profileId));
+        SttStreamSession s = sessions.remove(key(meetingId, profileId));
         if (s != null) {
             s.close();
             log.info("[StreamingMgr] 세션 종료 — meetingId={}, profileId={}", meetingId, profileId);
@@ -53,13 +53,13 @@ public class AssemblyAiStreamingManager {
                 .filter(k -> k.startsWith(meetingId + ":"))
                 .toList()
                 .forEach(k -> {
-                    WhisperStreamingSession s = sessions.remove(k);
+                    SttStreamSession s = sessions.remove(k);
                     if (s != null) s.close();
                 });
         log.info("[StreamingMgr] 회의 전체 세션 종료 — meetingId={}", meetingId);
     }
 
-    private WhisperStreamingSession createSession(String meetingId, String profileId) {
+    private SttStreamSession createSession(String meetingId, String profileId) {
         String resolvedDisplay = profileRepo.findById(UUID.fromString(profileId))
                 .map(p -> p.getDisplayName() != null ? p.getDisplayName() : profileId.substring(0, 8))
                 .orElse(profileId.substring(0, 8));
@@ -76,6 +76,23 @@ public class AssemblyAiStreamingManager {
             throw new IllegalStateException("OPENAI_API_KEY not configured");
         }
 
+        // OpenAI Realtime (말하는 중 자막) 우선, 연결 실패 시 Whisper 배치 폴백
+        try {
+            RealtimeSttSession session = new RealtimeSttSession(
+                    apiKey,
+                    props.getOpenai().getRealtimeModel(),
+                    props.getOpenai().getWhisperLanguage(),
+                    sessionOffsetMs,
+                    t -> onFinal(meetingId, profileId, resolvedDisplay, t),
+                    text -> onPartial(meetingId, profileId, resolvedDisplay, text)
+            );
+            log.info("[StreamingMgr] Realtime 세션 생성 — meetingId={}, profileId={}, offsetMs={}",
+                    meetingId, profileId, sessionOffsetMs);
+            return session;
+        } catch (Exception e) {
+            log.warn("[StreamingMgr] Realtime 연결 실패 — Whisper 배치로 폴백: {}", e.getMessage());
+        }
+
         WhisperStreamingSession session = new WhisperStreamingSession(
                 apiKey,
                 props.getOpenai().getWhisperModel(),
@@ -85,6 +102,21 @@ public class AssemblyAiStreamingManager {
         );
         log.info("[StreamingMgr] Whisper 세션 생성 — meetingId={}, profileId={}, offsetMs={}", meetingId, profileId, sessionOffsetMs);
         return session;
+    }
+
+    /** 말하는 중(partial) 자막 — DB 저장 없이 브로드캐스트만 */
+    private void onPartial(String meetingId, String profileId, String display, String text) {
+        try {
+            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
+                    "type", "transcript",
+                    "profileId", profileId,
+                    "speakerDisplay", display,
+                    "text", text,
+                    "isFinal", false
+            )));
+        } catch (Exception e) {
+            log.debug("[StreamingMgr] partial 브로드캐스트 실패: {}", e.getMessage());
+        }
     }
 
     private void onFinal(String meetingId, String profileId, String display,

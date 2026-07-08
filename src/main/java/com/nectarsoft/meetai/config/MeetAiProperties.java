@@ -64,6 +64,8 @@ public class MeetAiProperties {
         private String apiKey = "";
         private String whisperModel = "whisper-1";
         private String whisperLanguage = "ko";
+        // Realtime API 실시간 자막용 (gpt-4o-transcribe | gpt-4o-mini-transcribe)
+        private String realtimeModel = "gpt-4o-transcribe";
     }
 
     @Data

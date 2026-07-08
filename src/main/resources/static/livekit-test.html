@@ -185,7 +185,6 @@ var ws             = null;
 var room           = null;
 var sttRecorder    = null;
 var sttStream      = null;
-var sttTimer       = null;
 var micOn          = false;
 var participants   = {};
 var lkParticipants = {};
@@ -448,38 +447,28 @@ async function toggleMic() {
 
 function startSttRecorder(stream) {
   sttStream = stream;
-  recordSttSegment();
-  log('[STT] 녹음 시작 (5초 세그먼트)', 'tx');
+  var mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  sttRecorder = new MediaRecorder(sttStream, { mimeType: mime });
+  sttRecorder.ondataavailable = async (e) => {
+    if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+      ws.send(await e.data.arrayBuffer());
+    }
+  };
+  // 250ms 단위 연속 스트리밍 — 백엔드 상주 ffmpeg가 이어붙여 실시간 디코딩
+  sttRecorder.start(250);
+  log('[STT] 실시간 스트리밍 시작 (250ms)', 'tx');
 
   // 로컬 타일 마이크 아이콘 업데이트
   const tile = document.getElementById('tile_' + (room?.localParticipant?.identity || ''));
   if (tile) tile.querySelector('.mic-icon').textContent = '🎙';
 }
 
-// 5초마다 레코더를 재시작해서 매번 헤더 포함 완결 webm 파일을 전송
-// (timeslice 방식은 첫 조각 이후 헤더가 없어 Whisper가 해석 불가)
-function recordSttSegment() {
-  if (!sttStream) return;
-  var mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  sttRecorder = new MediaRecorder(sttStream, { mimeType: mime });
-  sttRecorder.ondataavailable = async (e) => {
-    if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
-      ws.send(await e.data.arrayBuffer());
-      log(`[STT] ${(e.data.size/1024).toFixed(1)}KB 전송`, 'tx');
-    }
-  };
-  sttRecorder.onstop = () => { if (sttStream) recordSttSegment(); };
-  sttRecorder.start();
-  sttTimer = setTimeout(function() { try { sttRecorder.stop(); } catch(_) {} }, 5000);
-}
-
 function stopSttRecorder() {
-  clearTimeout(sttTimer); sttTimer = null;
   sttStream = null;
   if (!sttRecorder) return;
   try { sttRecorder.stop(); } catch(_) {}
   sttRecorder = null;
-  log('[STT] 녹음 중지');
+  log('[STT] 스트리밍 중지');
 }
 
 // ── 회의 제어 ─────────────────────────────────────────────────────
@@ -542,8 +531,28 @@ function addTranscript(msg) {
   const area = document.getElementById('transcriptArea');
   document.getElementById('transcriptHint')?.remove();
   const isMe = msg.profileId === myProfileId;
+  const partialId = 'partial_' + (msg.profileId || 'unknown');
+
+  // 말하는 중(partial) 자막 — 화자별 말풍선 하나를 계속 갱신
+  if (msg.isFinal === false) {
+    let div = document.getElementById(partialId);
+    if (!div) {
+      div = document.createElement('div');
+      div.id = partialId;
+      div.className = 'seg partial' + (isMe ? ' me' : '');
+      div.innerHTML = `<div class="who">${msg.speakerDisplay || msg.profileId?.slice(0,8) || '?'}</div>
+        <div class="text"></div>`;
+      area.appendChild(div);
+    }
+    div.querySelector('.text').textContent = msg.text;
+    area.scrollTop = area.scrollHeight;
+    return;
+  }
+
+  // 확정 자막 — 해당 화자의 partial 말풍선을 확정본으로 교체
+  document.getElementById(partialId)?.remove();
   const div = document.createElement('div');
-  div.className = 'seg' + (isMe ? ' me' : '') + (msg.isFinal === false ? ' partial' : '');
+  div.className = 'seg' + (isMe ? ' me' : '');
   div.innerHTML = `<div class="who">${msg.speakerDisplay || msg.profileId?.slice(0,8) || '?'}</div>
     <div class="text">${msg.text}</div>`;
   area.appendChild(div);
