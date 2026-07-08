@@ -303,7 +303,11 @@ function handleSignal(msg) {
   log(`← ${msg.type}`, 'rx');
   switch(msg.type) {
     case 'room_info':
-      (msg.participants || []).forEach(p => addParticipant(p.profileId, p.role));
+      // 방장(ADMIN)만 회의 시작/종료 버튼 노출 (서버도 권한 검증하지만 UI에서 원천 차단)
+      var isAdmin = msg.role === 'ADMIN';
+      document.getElementById('btnStart').style.display = isAdmin ? '' : 'none';
+      document.getElementById('btnEnd').style.display   = isAdmin ? '' : 'none';
+      (msg.participants || []).forEach(p => addParticipant(p.profileId || p, p.role));
       break;
     case 'participant_joined': addParticipant(msg.profileId, msg.role); break;
     case 'participant_left':   removeParticipant(msg.profileId); break;

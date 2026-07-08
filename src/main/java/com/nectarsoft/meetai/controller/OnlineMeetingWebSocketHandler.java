@@ -89,6 +89,8 @@ public class OnlineMeetingWebSocketHandler extends AbstractWebSocketHandler {
         Map<String, Object> roomInfo = new LinkedHashMap<>();
         roomInfo.put("type", "room_info");
         roomInfo.put("status", meeting.getStatus().name());
+        // 접속자 본인의 역할 — 프론트가 방장 전용 버튼(회의 시작/종료) 노출 여부를 결정하는 데 사용
+        roomInfo.put("role", role);
         roomInfo.put("participants", new ArrayList<>(roomManager.getProfileIds(meetingId)));
         if (meeting.getMeetingDate() != null) {
             roomInfo.put("startedAt", meeting.getMeetingDate().toString());
