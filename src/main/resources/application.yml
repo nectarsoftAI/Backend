@@ -16,7 +16,8 @@ meetai:
 
   stt:
     # openai_whisper | gpt4o | assemblyai
-    engine: assemblyai
+    # 오프라인 회의는 화자 분리(diarization)가 필요하므로 assemblyai 사용 (Whisper는 화자 분리 미지원)
+    engine: ${STT_ENGINE:assemblyai}
     confidence-threshold: 0.8
     max-retries: 3
     retry-base-delay-ms: 1000
@@ -35,7 +36,8 @@ meetai:
   assemblyai:
     api-key: ${ASSEMBLYAI_API_KEY:}
     language-code: ko
-    speakers-expected: 2
+    # 0 = 화자 수 자동 감지 (참여 인원을 모르는 오프라인 녹음 기본값)
+    speakers-expected: ${STT_SPEAKERS_EXPECTED:0}
 
   livekit:
     api-key: ${LIVEKIT_API_KEY:}

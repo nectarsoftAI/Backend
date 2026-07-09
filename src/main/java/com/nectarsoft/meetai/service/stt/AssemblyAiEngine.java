@@ -83,15 +83,16 @@ public class AssemblyAiEngine implements SttEngine {
         try {
             MeetAiProperties.AssemblyAi cfg = props.getAssemblyai();
 
-            Map<String, Object> payload = speakerLabels
-                    ? Map.of(
-                        "audio_url", uploadUrl,
-                        "speaker_labels", true,
-                        "speakers_expected", cfg.getSpeakersExpected(),
-                        "language_code", cfg.getLanguageCode())
-                    : Map.of(
-                        "audio_url", uploadUrl,
-                        "language_code", cfg.getLanguageCode());
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("audio_url", uploadUrl);
+            payload.put("language_code", cfg.getLanguageCode());
+            if (speakerLabels) {
+                payload.put("speaker_labels", true);
+                // 화자 수를 모르면(0 이하) 힌트 없이 자동 감지에 맡김
+                if (cfg.getSpeakersExpected() > 0) {
+                    payload.put("speakers_expected", cfg.getSpeakersExpected());
+                }
+            }
 
             RequestBody body = RequestBody.create(
                     mapper.writeValueAsString(payload),
