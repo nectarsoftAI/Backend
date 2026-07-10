@@ -210,7 +210,21 @@ public class LiveService {
         Meeting meeting = meetingRepo.findById(mid).orElse(null);
         if (meeting == null) return;
         try {
-            List<DiarizedSegment> segments = diarize(Files.readAllBytes(audio), audio.getFileName().toString());
+            byte[] bytes = Files.readAllBytes(audio);
+            String filename = audio.getFileName().toString();
+
+            List<DiarizedSegment> segments;
+            try {
+                segments = diarize(bytes, filename);
+            } catch (Exception e) {
+                // 화자 분리 실패해도 회의록 텍스트는 반드시 남긴다 (DB 공백 방지)
+                log.error("[Live] 화자 분리 실패 — 단일 화자 전사로 폴백, meetingId={}: {}", mid, e.getMessage());
+                segments = plainTranscribe(bytes, filename);
+            }
+            if (segments.isEmpty()) {
+                log.warn("[Live] 변환 결과 없음 — meetingId={}", mid);
+                return;
+            }
 
             SttResult sttResult = SttResult.builder()
                     .meeting(meeting)
@@ -238,14 +252,44 @@ public class LiveService {
             transcriptRepo.saveAll(transcripts);
 
             long speakers = segments.stream().map(DiarizedSegment::speaker).distinct().count();
-            log.info("[Live] 최종 화자 분리 완료 — meetingId={}, segments={}, 화자 {}명",
+            log.info("[Live] 최종 변환 완료 — meetingId={}, segments={}, 화자 {}명",
                     mid, transcripts.size(), speakers);
         } catch (Exception e) {
-            log.error("[Live] 최종 화자 분리 실패 — meetingId={}: {}", mid, e.getMessage());
+            log.error("[Live] 최종 변환 실패 — meetingId={}: {}", mid, e.getMessage());
         } finally {
             meeting.setStatus(MeetingStatus.COMPLETED);
             meetingRepo.save(meeting);
             notifySessionEnded(mid.toString());
+        }
+    }
+
+    /** 화자 분리 실패 시 폴백: 일반 전사(gpt-4o-transcribe)로 텍스트만 확보 → 단일 화자로 저장 */
+    private List<DiarizedSegment> plainTranscribe(byte[] audio, String filename) {
+        try {
+            RequestBody body = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", filename,
+                            RequestBody.create(audio, MediaType.parse("application/octet-stream")))
+                    .addFormDataPart("model", "gpt-4o-transcribe")
+                    .addFormDataPart("response_format", "json")
+                    .build();
+            Request request = new Request.Builder()
+                    .url(TRANSCRIBE_URL)
+                    .header("Authorization", "Bearer " + props.getOpenai().getApiKey())
+                    .post(body)
+                    .build();
+            try (Response response = http.newCall(request).execute()) {
+                String raw = response.body() != null ? response.body().string() : "";
+                if (!response.isSuccessful()) {
+                    log.error("[Live] 폴백 전사도 실패 {}: {}", response.code(), raw);
+                    return List.of();
+                }
+                String text = objectMapper.readTree(raw).path("text").asText("").strip();
+                return text.isEmpty() ? List.of() : List.of(new DiarizedSegment("A", text, 0, 0));
+            }
+        } catch (Exception e) {
+            log.error("[Live] 폴백 전사 오류: {}", e.getMessage());
+            return List.of();
         }
     }
 
@@ -258,6 +302,8 @@ public class LiveService {
                         RequestBody.create(audio, MediaType.parse("application/octet-stream")))
                 .addFormDataPart("model", DIARIZE_MODEL)
                 .addFormDataPart("response_format", "diarized_json")
+                // diarize 모델은 일정 길이 이상이면 chunking_strategy 필수 (없으면 400)
+                .addFormDataPart("chunking_strategy", "auto")
                 .build();
         Request request = new Request.Builder()
                 .url(TRANSCRIBE_URL)
