@@ -48,7 +48,8 @@ import java.util.concurrent.TimeUnit;
 public class LiveService {
 
     private static final int SAMPLE_RATE = 16000;
-    private static final int ROLLING_INTERVAL_SEC = 12;
+    // 짧을수록 자막 지연이 줄지만 전체 오디오를 매번 재처리하므로 API 비용 증가
+    private static final int ROLLING_INTERVAL_SEC = 6;
     private static final String TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions";
     private static final String DIARIZE_MODEL = "gpt-4o-transcribe-diarize";
 
