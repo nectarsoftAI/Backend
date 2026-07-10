@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.websocket.OnlineRoomManager;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.repository.MeetingRepository;
-import com.nectarsoft.meetai.service.AssemblyAiStreamingManager;
 import com.nectarsoft.meetai.service.LiveService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +23,6 @@ public class LiveWebSocketHandler extends AbstractWebSocketHandler {
 
     private final LiveService liveService;
     private final MeetingRepository meetingRepo;
-    private final AssemblyAiStreamingManager streamingManager;
     private final OnlineRoomManager roomManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -67,11 +65,8 @@ public class LiveWebSocketHandler extends AbstractWebSocketHandler {
         payload.get(pcm);
 
         log.debug("[LiveWS] PCM 수신 — meetingId={}, bytes={}", meetingId, pcm.length);
-        try {
-            streamingManager.sendAudio(meetingId, profileId, pcm);
-        } catch (Exception e) {
-            log.error("[LiveWS] 오디오 스트리밍 오류 — meetingId={}: {}", meetingId, e.getMessage());
-        }
+        // 누적 녹음 → LiveService가 주기적으로 OpenAI 화자 분리(diarize) 자막을 브로드캐스트
+        liveService.appendAudio(meetingId, pcm);
     }
 
     @Override
