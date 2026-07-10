@@ -82,7 +82,6 @@ public class LiveService {
         long bytes;
         long lastDiarizedBytes;
         double lastBroadcastEnd;
-        String ownerId;
     }
 
     @PostConstruct
@@ -142,7 +141,16 @@ public class LiveService {
 
         meeting.setStatus(MeetingStatus.COMPLETED);
         meetingRepo.save(meeting);
+        notifySessionEnded(meetingId);
         log.info("[Live] 세션 종료 완료 — meetingId={}", meetingId);
+    }
+
+    /** 프론트 스펙: 서버가 session_ended를 보낸 뒤 WS를 닫는다 (프론트는 이걸 기다림) */
+    private void notifySessionEnded(String meetingId) {
+        try {
+            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of("type", "session_ended")));
+        } catch (Exception ignored) {}
+        roomManager.closeAll(meetingId);
     }
 
     // ── 준실시간: 주기적으로 누적 오디오를 화자 분리해 새 구간만 브로드캐스트 ──
@@ -179,15 +187,14 @@ public class LiveService {
             if (text.isEmpty()) continue;
             String label = "SPEAKER_" + seg.speaker();
             try {
+                // 프론트(LiveSTTService.ts) 스펙: type=segment + snake_case 필드
                 roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
-                        "type", "transcript",
-                        "profileId", r.ownerId,
-                        "speakerLabel", label,
-                        "speakerDisplay", label,
+                        "type", "segment",
+                        "speaker_label", label,
+                        "start_sec", seg.start(),
+                        "end_sec", seg.end(),
                         "text", text,
-                        "startSec", seg.start(),
-                        "endSec", seg.end(),
-                        "isFinal", true
+                        "confidence", 1.0
                 )));
                 r.lastBroadcastEnd = Math.max(r.lastBroadcastEnd, seg.end());
                 log.info("[Live] 화자 자막 — [{}] \"{}\"", label, text);
@@ -238,6 +245,7 @@ public class LiveService {
         } finally {
             meeting.setStatus(MeetingStatus.COMPLETED);
             meetingRepo.save(meeting);
+            notifySessionEnded(mid.toString());
         }
     }
 
@@ -286,8 +294,6 @@ public class LiveService {
             r.path = dir.resolve(meetingId + (r.pcm ? ".pcm" : ".webm"));
             r.out = new BufferedOutputStream(Files.newOutputStream(
                     r.path, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING));
-            r.ownerId = meetingRepo.findById(UUID.fromString(meetingId))
-                    .map(m -> m.getUserId().toString()).orElse(meetingId);
             log.info("[Live] 녹음 시작 — {} (pcm={})", r.path.getFileName(), r.pcm);
             return r;
         } catch (IOException e) {
