@@ -132,13 +132,17 @@ public class LiveService {
 
         Path recording = finishRecording(meetingId);
         if (recording != null) {
+            // A안: 화면은 즉시 종료(session_ended + WS close), 최종 화자 분리는 백그라운드로.
+            // 프론트는 GET /meetings/{id}의 status가 PROCESSING→COMPLETED 될 때 완성 회의록을 폴링한다.
             meeting.setStatus(MeetingStatus.PROCESSING);
             meetingRepo.save(meeting);
+            notifySessionEnded(meetingId);
             diarizeExecutor.submit(() -> finalizeTranscripts(mid, recording));
-            log.info("[Live] 세션 종료 — 최종 화자 분리 변환 시작, meetingId={}", meetingId);
+            log.info("[Live] 세션 종료(즉시) — 최종 화자 분리는 백그라운드 진행, meetingId={}", meetingId);
             return;
         }
 
+        // 녹음본이 없으면 바로 완료 처리
         meeting.setStatus(MeetingStatus.COMPLETED);
         meetingRepo.save(meeting);
         notifySessionEnded(meetingId);
@@ -257,9 +261,10 @@ public class LiveService {
         } catch (Exception e) {
             log.error("[Live] 최종 변환 실패 — meetingId={}: {}", mid, e.getMessage());
         } finally {
+            // WS는 endSession에서 이미 닫음. 여기서는 상태만 COMPLETED로 전환 (프론트가 폴링으로 감지)
             meeting.setStatus(MeetingStatus.COMPLETED);
             meetingRepo.save(meeting);
-            notifySessionEnded(mid.toString());
+            log.info("[Live] 백그라운드 처리 완료 — status=COMPLETED, meetingId={}", mid);
         }
     }
 
