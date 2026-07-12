@@ -9,6 +9,7 @@ import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.dto.UpdateTranscriptRequest;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.service.LlmService;
+import com.nectarsoft.meetai.model.MeetingStatus;
 import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.SttProcessingStatus;
 import com.nectarsoft.meetai.model.Transcript;
@@ -20,6 +21,7 @@ import com.nectarsoft.meetai.repository.TranscriptRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -31,6 +33,7 @@ import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Tag(name = "Meetings", description = "회의 결과 조회/삭제")
 @RestController
 @RequestMapping("/api/v1/meetings")
@@ -114,11 +117,16 @@ public class MeetingController {
     }
 
     @Operation(summary = "LLM 요약 동기 생성",
-               description = "DB 트랜스크립트로 LLM 요약을 실행하고 결과를 반환합니다. session_ended 후 프론트가 호출합니다.")
+               description = "DB 트랜스크립트로 LLM 요약을 실행하고 결과를 반환합니다. session_ended 후 프론트가 호출합니다. "
+                       + "실시간 녹음은 종료 직후 최종 화자 분리가 백그라운드로 진행되므로(status=PROCESSING) 완료될 때까지 대기 후 요약합니다.")
     @PostMapping("/{meetingId}/summarize")
     public MeetingDetailResponse.SummaryDto generateSummary(@PathVariable UUID meetingId) {
-        meetingRepo.findById(meetingId)
+        Meeting meeting = meetingRepo.findById(meetingId)
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
+
+        // 실시간 녹음(A안): session_ended 직후엔 최종 화자 분리가 백그라운드 진행 중이라
+        // transcripts가 아직 비어 있다 — COMPLETED로 바뀔 때까지 기다렸다가 요약한다
+        awaitLiveFinalization(meetingId, meeting.getStatus());
 
         List<Transcript> transcripts = transcriptRepo.findByMeetingMeetingIdOrderByStartSecAsc(meetingId);
         if (transcripts.isEmpty()) {
@@ -138,6 +146,34 @@ public class MeetingController {
                 .processingStatus(dto.getProcessingStatus())
                 .processedAt(dto.getProcessedAt())
                 .build();
+    }
+
+    private static final long FINALIZE_WAIT_TIMEOUT_MS = 180_000L;
+    private static final long FINALIZE_POLL_INTERVAL_MS = 2_000L;
+
+    // 백그라운드 최종 변환(LiveService.finalizeTranscripts)이 끝나 status가 PROCESSING을
+    // 벗어날 때까지 폴링 대기. findById 재조회는 영속성 컨텍스트에 캐시된 엔티티를 돌려주므로
+    // 반드시 스칼라 쿼리(findStatusByMeetingId)로 확인해야 상태 변화가 보인다.
+    private void awaitLiveFinalization(UUID meetingId, MeetingStatus initialStatus) {
+        if (initialStatus != MeetingStatus.PROCESSING) return;
+
+        log.info("[Summarize] 최종 변환 대기 시작 — meetingId={}", meetingId);
+        long deadline = System.currentTimeMillis() + FINALIZE_WAIT_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(FINALIZE_POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            MeetingStatus status = meetingRepo.findStatusByMeetingId(meetingId).orElse(null);
+            if (status != MeetingStatus.PROCESSING) {
+                log.info("[Summarize] 최종 변환 완료 감지 — meetingId={}, status={}", meetingId, status);
+                return;
+            }
+        }
+        log.warn("[Summarize] 최종 변환 대기 타임아웃({}s) — meetingId={}",
+                FINALIZE_WAIT_TIMEOUT_MS / 1000, meetingId);
     }
 
     @Operation(summary = "LLM 요약 저장 (Python LLM 서버가 호출)")
