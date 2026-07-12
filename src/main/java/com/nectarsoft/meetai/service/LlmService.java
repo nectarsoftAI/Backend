@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -38,6 +39,11 @@ public class LlmService {
     private final MeetingRepository meetingRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // meetingId별 in-flight 가드 — 같은 회의에 대한 동시 요약 요청을 1회 LLM 호출로 병합.
+    // (업로드: SttController 비동기 + 프론트 /summarize, 온라인: endMeeting 비동기 + 방장 화면
+    //  + 상세 화면이 동시에 호출 → 중복 LLM 호출로 TPM 소진 및 duplicate key의 원인이었음)
+    private final ConcurrentHashMap<UUID, Object> summarizeLocks = new ConcurrentHashMap<>();
+
     @Async
     public void summarizeAsync(UUID meetingId, List<Transcript> transcripts) {
         try {
@@ -48,6 +54,19 @@ public class LlmService {
     }
 
     public TranscribeResponse.SummaryDto summarize(UUID meetingId, List<Transcript> transcripts) {
+        Object lock = summarizeLocks.computeIfAbsent(meetingId, k -> new Object());
+        synchronized (lock) {
+            try {
+                // 먼저 진입한 호출이 LLM을 실행하는 동안 대기했다가,
+                // 완료되면 아래 DB 캐시 체크에서 결과를 그대로 반환한다
+                return doSummarize(meetingId, transcripts);
+            } finally {
+                summarizeLocks.remove(meetingId, lock);
+            }
+        }
+    }
+
+    private TranscribeResponse.SummaryDto doSummarize(UUID meetingId, List<Transcript> transcripts) {
         // DB에 이미 완료된 요약이 있으면 LLM 호출 없이 반환
         Optional<MeetingSummary> existing = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
         if (existing.isPresent() && existing.get().getProcessingStatus() == SttProcessingStatus.COMPLETED) {

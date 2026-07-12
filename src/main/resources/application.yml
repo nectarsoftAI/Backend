@@ -23,7 +23,9 @@ meetai:
     retry-base-delay-ms: 1000
     retry-max-delay-ms: 8000
     polish-enabled: true
-    polish-model: gpt-4o-mini
+    # 별칭 gpt-4o-mini는 프로젝트 모델 제한에서 403(model_not_found)이 났음 —
+    # 처음부터 허용돼 있던 날짜 스냅샷을 기본값으로 사용
+    polish-model: ${POLISH_MODEL:gpt-4o-mini-2024-07-18}
 
   openai:
     api-key: ${OPENAI_API_KEY}
