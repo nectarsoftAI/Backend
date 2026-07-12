@@ -44,7 +44,7 @@ public class SttController {
     private final LlmService llmService;
 
     @Operation(summary = "파일 업로드 → STT + LLM 요약",
-               description = "오디오 파일을 업로드하면 STT 변환을 수행하고 즉시 반환합니다. LLM 요약은 백그라운드에서 처리되어 DB에 저장됩니다.")
+               description = "오디오 파일을 업로드하면 STT 변환 및 LLM 요약을 수행하고 둘 다 반환합니다.")
     @PostMapping(value = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public TranscribeResponse transcribe(
             @RequestParam("file") MultipartFile file,
@@ -106,11 +106,13 @@ public class SttController {
 
         log.info("[STT] 완료 — meetingId={}, segments={}", meeting.getMeetingId(), segments.size());
 
-        // LLM 요약 (비동기 — STT 결과 즉시 반환, 요약은 백그라운드 처리 후 DB 저장)
+        // LLM 요약 (동기 — 응답에 요약 포함, 프론트가 즉시 표시)
+        // in-flight 가드가 동시 호출을 병합하고 429 재시도가 있어 동기로도 안전하다
+        TranscribeResponse.SummaryDto summary = null;
         if (!transcripts.isEmpty()) {
-            llmService.summarizeAsync(meeting.getMeetingId(), transcripts);
+            summary = llmService.summarize(meeting.getMeetingId(), transcripts);
         }
 
-        return TranscribeResponse.from(segments, sttService.engineName(), meeting.getMeetingId(), null);
+        return TranscribeResponse.from(segments, sttService.engineName(), meeting.getMeetingId(), summary);
     }
 }
