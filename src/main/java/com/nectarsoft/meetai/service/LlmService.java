@@ -14,7 +14,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import com.nectarsoft.meetai.core.retry.RetryHelper;
 
 import org.springframework.dao.DataIntegrityViolationException;
 
@@ -75,7 +77,15 @@ public class LlmService {
             );
 
             String url = props.getLlm().getUrl() + "/api/summary";
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, payload, Map.class);
+
+            ResponseEntity<Map> response = RetryHelper.retry(() -> {
+                try {
+                    return restTemplate.postForEntity(url, payload, Map.class);
+                } catch (HttpClientErrorException.TooManyRequests e) {
+                    log.warn("[LLM] 429 Rate limit — 재시도 대기: {}", e.getMessage());
+                    throw e;
+                }
+            }, 3, 5000L, 20000L);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
                 log.warn("[LLM] 요약 실패 — status={}", response.getStatusCode());
