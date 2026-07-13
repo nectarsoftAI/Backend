@@ -49,6 +49,8 @@ meetai:
     language: ${SPEECHMATICS_LANGUAGE:ko}
     enabled: ${SPEECHMATICS_ENABLED:false}
     max-delay-sec: ${SPEECHMATICS_MAX_DELAY:2.0}
+    operating-point: ${SPEECHMATICS_OPERATING_POINT:enhanced}
+    speaker-sensitivity: ${SPEECHMATICS_SPEAKER_SENSITIVITY:0.6}
 
   livekit:
     api-key: ${LIVEKIT_API_KEY:}

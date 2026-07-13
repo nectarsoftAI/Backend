@@ -137,7 +137,8 @@ public class LiveService {
             MeetAiProperties.Speechmatics cfg = props.getSpeechmatics();
             log.info("[Live] Speechmatics 스트리밍 세션 시작 — meetingId={}", k);
             return new SpeechmaticsLiveSession(cfg.getApiKey(), cfg.getUrl(), cfg.getLanguage(),
-                    cfg.getMaxDelaySec(), seg -> broadcastLiveSegment(k, seg));
+                    cfg.getMaxDelaySec(), cfg.getOperatingPoint(), cfg.getSpeakerSensitivity(),
+                    seg -> broadcastLiveSegment(k, seg));
         });
     }
 
