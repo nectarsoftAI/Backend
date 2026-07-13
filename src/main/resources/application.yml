@@ -41,6 +41,15 @@ meetai:
     # 0 = 화자 수 자동 감지 (참여 인원을 모르는 오프라인 녹음 기본값)
     speakers-expected: ${STT_SPEAKERS_EXPECTED:0}
 
+  # 실시간 녹음 화자 분리 — Speechmatics 스트리밍 (한국어 실시간 diarize 지원)
+  # SPEECHMATICS_ENABLED=true 로 켜면 OpenAI 롤링 배치 대신 스트리밍 사용
+  speechmatics:
+    api-key: ${SPEECHMATICS_KEY:}
+    url: ${SPEECHMATICS_URL:wss://eu2.rt.speechmatics.com/v2}
+    language: ${SPEECHMATICS_LANGUAGE:ko}
+    enabled: ${SPEECHMATICS_ENABLED:false}
+    max-delay-sec: ${SPEECHMATICS_MAX_DELAY:2.0}
+
   livekit:
     api-key: ${LIVEKIT_API_KEY:}
     api-secret: ${LIVEKIT_API_SECRET:}

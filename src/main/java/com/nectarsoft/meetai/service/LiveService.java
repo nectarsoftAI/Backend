@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * 실시간 녹음 세션 (한 마이크, 다중 화자)
@@ -66,6 +67,8 @@ public class LiveService {
             .build();
 
     private final Map<String, Recording> recordings = new ConcurrentHashMap<>();
+    // Speechmatics 스트리밍 세션 (speechmatics.enabled일 때만 사용) — meetingId별 1개
+    private final Map<String, SpeechmaticsLiveSession> liveSessions = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService diarizeExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "live-diarize");
@@ -114,6 +117,43 @@ public class LiveService {
         } catch (Exception e) {
             log.warn("[Live] 녹음 누적 실패 — meetingId={}: {}", meetingId, e.getMessage());
         }
+        // Speechmatics 스트리밍: 파일 누적과 별개로 같은 청크를 실시간 전송 (파일은 종료 시 폴백/보관용)
+        if (speechmaticsActive()) {
+            try {
+                liveSessionFor(meetingId).sendAudio(data);
+            } catch (Exception e) {
+                log.warn("[Live] Speechmatics 스트리밍 실패 — meetingId={}: {}", meetingId, e.getMessage());
+            }
+        }
+    }
+
+    private boolean speechmaticsActive() {
+        MeetAiProperties.Speechmatics s = props.getSpeechmatics();
+        return s.isEnabled() && s.getApiKey() != null && !s.getApiKey().isBlank();
+    }
+
+    private SpeechmaticsLiveSession liveSessionFor(String meetingId) {
+        return liveSessions.computeIfAbsent(meetingId, k -> {
+            MeetAiProperties.Speechmatics cfg = props.getSpeechmatics();
+            log.info("[Live] Speechmatics 스트리밍 세션 시작 — meetingId={}", k);
+            return new SpeechmaticsLiveSession(cfg.getApiKey(), cfg.getUrl(), cfg.getLanguage(),
+                    cfg.getMaxDelaySec(), seg -> broadcastLiveSegment(k, seg));
+        });
+    }
+
+    /** Speechmatics 확정 자막을 프론트(LiveSTTService.ts) segment 스펙으로 브로드캐스트 */
+    private void broadcastLiveSegment(String meetingId, SpeechmaticsLiveSession.Segment seg) {
+        try {
+            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
+                    "type", "segment",
+                    "speaker_label", seg.speakerLabel(),
+                    "start_sec", seg.startSec(),
+                    "end_sec", seg.endSec(),
+                    "text", seg.text(),
+                    "confidence", 1.0)));
+        } catch (Exception e) {
+            log.debug("[Live] Speechmatics 자막 브로드캐스트 실패: {}", e.getMessage());
+        }
     }
 
     public void endSession(String meetingId) {
@@ -131,13 +171,14 @@ public class LiveService {
         }
 
         Path recording = finishRecording(meetingId);
-        if (recording != null) {
+        SpeechmaticsLiveSession live = liveSessions.remove(meetingId);
+        if (recording != null || live != null) {
             // A안: 화면은 즉시 종료(session_ended + WS close), 최종 화자 분리는 백그라운드로.
             // 프론트는 GET /meetings/{id}의 status가 PROCESSING→COMPLETED 될 때 완성 회의록을 폴링한다.
             meeting.setStatus(MeetingStatus.PROCESSING);
             meetingRepo.save(meeting);
             notifySessionEnded(meetingId);
-            diarizeExecutor.submit(() -> finalizeTranscripts(mid, recording));
+            diarizeExecutor.submit(() -> finalizeTranscripts(mid, recording, live));
             log.info("[Live] 세션 종료(즉시) — 최종 화자 분리는 백그라운드 진행, meetingId={}", meetingId);
             return;
         }
@@ -160,6 +201,8 @@ public class LiveService {
     // ── 준실시간: 주기적으로 누적 오디오를 화자 분리해 새 구간만 브로드캐스트 ──
 
     private void rollingPass() {
+        // Speechmatics 스트리밍이 켜져 있으면 실시간 자막은 스트리밍 세션이 담당 → 롤링 배치 생략
+        if (speechmaticsActive()) return;
         for (Map.Entry<String, Recording> entry : recordings.entrySet()) {
             String meetingId = entry.getKey();
             Recording r = entry.getValue();
@@ -210,21 +253,11 @@ public class LiveService {
 
     // ── 종료: 전체 오디오 최종 변환 → 회의록 저장 ──────────────────────
 
-    private void finalizeTranscripts(UUID mid, Path audio) {
+    private void finalizeTranscripts(UUID mid, Path audio, SpeechmaticsLiveSession live) {
         Meeting meeting = meetingRepo.findById(mid).orElse(null);
         if (meeting == null) return;
         try {
-            byte[] bytes = Files.readAllBytes(audio);
-            String filename = audio.getFileName().toString();
-
-            List<DiarizedSegment> segments;
-            try {
-                segments = diarize(bytes, filename);
-            } catch (Exception e) {
-                // 화자 분리 실패해도 회의록 텍스트는 반드시 남긴다 (DB 공백 방지)
-                log.error("[Live] 화자 분리 실패 — 단일 화자 전사로 폴백, meetingId={}: {}", mid, e.getMessage());
-                segments = plainTranscribe(bytes, filename);
-            }
+            List<DiarizedSegment> segments = collectFinalSegments(mid, audio, live);
             if (segments.isEmpty()) {
                 log.warn("[Live] 변환 결과 없음 — meetingId={}", mid);
                 return;
@@ -265,6 +298,48 @@ public class LiveService {
             meeting.setStatus(MeetingStatus.COMPLETED);
             meetingRepo.save(meeting);
             log.info("[Live] 백그라운드 처리 완료 — status=COMPLETED, meetingId={}", mid);
+        }
+    }
+
+    /**
+     * 최종 세그먼트 확보 — 우선순위:
+     * 1) Speechmatics 스트리밍 결과(있으면 그대로 사용, 추가 API 호출 없음)
+     * 2) OpenAI gpt-4o-transcribe-diarize 배치(스트리밍 미사용 또는 결과 없음)
+     * 3) 일반 전사(단일 화자) — diarize 실패 시 DB 공백 방지
+     */
+    private List<DiarizedSegment> collectFinalSegments(UUID mid, Path audio, SpeechmaticsLiveSession live) {
+        if (live != null) {
+            try {
+                live.close(); // EndOfStream 후 남은 확정 자막까지 수신
+                List<DiarizedSegment> segs = live.getSegments().stream()
+                        .map(s -> new DiarizedSegment(
+                                s.speakerLabel().replaceFirst("^SPEAKER_", ""), // 저장 루프가 다시 SPEAKER_ 접두
+                                s.text(), s.startSec(), s.endSec()))
+                        .collect(Collectors.toList());
+                if (!segs.isEmpty()) {
+                    log.info("[Live] Speechmatics 스트리밍 결과로 회의록 확정 — meetingId={}, segments={}",
+                            mid, segs.size());
+                    return segs;
+                }
+                log.warn("[Live] Speechmatics 결과 없음 — 배치 폴백, meetingId={}", mid);
+            } catch (Exception e) {
+                log.error("[Live] Speechmatics 종료 처리 실패 — 배치 폴백, meetingId={}: {}", mid, e.getMessage());
+            }
+        }
+        if (audio == null) return List.of();
+        try {
+            byte[] bytes = Files.readAllBytes(audio);
+            String filename = audio.getFileName().toString();
+            try {
+                return diarize(bytes, filename);
+            } catch (Exception e) {
+                // 화자 분리 실패해도 회의록 텍스트는 반드시 남긴다 (DB 공백 방지)
+                log.error("[Live] 화자 분리 실패 — 단일 화자 전사로 폴백, meetingId={}: {}", mid, e.getMessage());
+                return plainTranscribe(bytes, filename);
+            }
+        } catch (IOException e) {
+            log.error("[Live] 최종 오디오 읽기 실패 — meetingId={}: {}", mid, e.getMessage());
+            return List.of();
         }
     }
 

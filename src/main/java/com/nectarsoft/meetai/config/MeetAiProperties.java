@@ -16,6 +16,7 @@ public class MeetAiProperties {
     private Stt stt = new Stt();
     private Openai openai = new Openai();
     private AssemblyAi assemblyai = new AssemblyAi();
+    private Speechmatics speechmatics = new Speechmatics();
     private Diarization diarization = new Diarization();
     private Llm llm = new Llm();
     private LiveKit livekit = new LiveKit();
@@ -75,6 +76,19 @@ public class MeetAiProperties {
         private String apiKey = "";
         private String languageCode = "ko";
         private int speakersExpected = 2;
+    }
+
+    @Data
+    public static class Speechmatics {
+        // Railway 환경변수 SPEECHMATICS_KEY 로 주입
+        private String apiKey = "";
+        // 리전별 실시간 엔드포인트 (eu2 | neu | us). 한국은 us가 지연이 낮은 편
+        private String url = "wss://eu2.rt.speechmatics.com/v2";
+        private String language = "ko";
+        // true일 때 실시간 녹음이 OpenAI 롤링 배치 대신 Speechmatics 스트리밍을 사용
+        private boolean enabled = false;
+        // 확정 자막(AddTranscript) 지연 상한(초). 낮을수록 자막이 빨리 뜨지만 문장이 잘게 쪼개짐
+        private double maxDelaySec = 2.0;
     }
 
     @Data
