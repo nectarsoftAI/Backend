@@ -45,6 +45,8 @@ public class SpeechmaticsLiveSession {
     private final String url;
     private final String language;
     private final double maxDelaySec;
+    private final String operatingPoint;
+    private final double speakerSensitivity;
     private final Consumer<Segment> onSegment;
 
     private volatile WebSocket ws;
@@ -79,12 +81,15 @@ public class SpeechmaticsLiveSession {
     private boolean containerInput;
     private boolean formatDetected = false;
 
-    public SpeechmaticsLiveSession(String apiKey, String url, String language,
-                                   double maxDelaySec, Consumer<Segment> onSegment) {
+    public SpeechmaticsLiveSession(String apiKey, String url, String language, double maxDelaySec,
+                                   String operatingPoint, double speakerSensitivity,
+                                   Consumer<Segment> onSegment) {
         this.apiKey = apiKey;
         this.url = url;
         this.language = language;
         this.maxDelaySec = maxDelaySec;
+        this.operatingPoint = operatingPoint;
+        this.speakerSensitivity = speakerSensitivity;
         this.onSegment = onSegment;
 
         this.ws = connectWs();
@@ -109,17 +114,26 @@ public class SpeechmaticsLiveSession {
     }
 
     private void sendStartRecognition() {
+        Map<String, Object> diarConfig = new LinkedHashMap<>();
+        diarConfig.put("speaker_sensitivity", speakerSensitivity);
+
+        Map<String, Object> tc = new LinkedHashMap<>();
+        tc.put("language", language);
+        tc.put("operating_point", operatingPoint); // enhanced = 정확도·화자 분리 품질 향상
+        tc.put("diarization", "speaker");
+        tc.put("speaker_diarization_config", diarConfig);
+        tc.put("max_delay", maxDelaySec);
+        tc.put("enable_partials", false);
+
         sendJson(Map.of(
                 "message", "StartRecognition",
                 "audio_format", Map.of(
                         "type", "raw",
                         "encoding", "pcm_s16le",
                         "sample_rate", SAMPLE_RATE),
-                "transcription_config", new LinkedHashMap<>(Map.of(
-                        "language", language,
-                        "diarization", "speaker",
-                        "max_delay", maxDelaySec,
-                        "enable_partials", false))));
+                "transcription_config", tc));
+        log.info("[Speechmatics] StartRecognition — operating_point={}, sensitivity={}, max_delay={}",
+                operatingPoint, speakerSensitivity, maxDelaySec);
     }
 
     // ── 오디오 입력 ─────────────────────────────────────────────────

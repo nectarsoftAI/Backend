@@ -89,6 +89,10 @@ public class MeetAiProperties {
         private boolean enabled = false;
         // 확정 자막(AddTranscript) 지연 상한(초). 낮을수록 자막이 빨리 뜨지만 문장이 잘게 쪼개짐
         private double maxDelaySec = 2.0;
+        // standard | enhanced — enhanced가 정확도·화자 분리 품질이 높음(지연 소폭 증가). Speechmatics 권장값
+        private String operatingPoint = "enhanced";
+        // 화자 감지 민감도(0~1, 기본 0.5). 높일수록 서로 다른 화자를 더 잘 나눔(과분리 위험도 증가)
+        private double speakerSensitivity = 0.6;
     }
 
     @Data
