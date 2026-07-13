@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -58,6 +60,19 @@ public class SpeechmaticsLiveSession {
     // 확정 세그먼트 누적 (종료 시 회의록 저장용)
     private final List<Segment> finals = new CopyOnWriteArrayList<>();
 
+    // ── 화자 턴(turn) 누적 ──────────────────────────────────────────
+    // 실시간 diarization은 단어마다 화자 라벨이 흔들리므로(UU 미상 섞임), 단어별로 확정하지 않고
+    // "같은 화자가 이어지는 동안" 누적했다가 진짜 화자 전환 / 침묵 / 최대 길이에서만 한 덩어리로 확정한다.
+    private static final long IDLE_FLUSH_MS = 700;   // 이 시간 이상 새 단어가 없으면 발화 끝으로 보고 확정
+    private static final double MAX_TURN_SEC = 15.0;  // 한 턴이 너무 길어지지 않도록 상한
+    private final Object turnLock = new Object();
+    private String turnSpeaker;                       // 현재 턴의 확정 화자(S1/S2). UU만 본 경우 null
+    private final StringBuilder turnText = new StringBuilder();
+    private double turnStart = -1;
+    private double turnEnd = 0;
+    private volatile long lastWordWallMs = 0;         // 마지막 단어 수신 시각(침묵 판정용)
+    private ScheduledExecutorService flusher;
+
     // 상주 ffmpeg (컨테이너 입력일 때만)
     private Process ffmpeg;
     private OutputStream ffmpegIn;
@@ -74,6 +89,15 @@ public class SpeechmaticsLiveSession {
 
         this.ws = connectWs();
         sendStartRecognition();
+
+        // 침묵 감지용 idle 플러셔 — 발화가 끊기면 누적된 턴을 확정 브로드캐스트
+        this.flusher = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "speechmatics-flush");
+            t.setDaemon(true);
+            return t;
+        });
+        this.flusher.scheduleWithFixedDelay(this::checkIdleFlush, 250, 250, TimeUnit.MILLISECONDS);
+
         log.info("[Speechmatics] 세션 연결 — url={}, lang={}", url, language);
     }
 
@@ -250,7 +274,7 @@ public class SpeechmaticsLiveSession {
             JsonNode node = MAPPER.readTree(raw);
             switch (node.path("message").asText("")) {
                 case "RecognitionStarted" -> flushPreBuffer();
-                case "AddTranscript" -> emitSegments(node);
+                case "AddTranscript" -> addWords(node);
                 case "EndOfTranscript" -> endLatch.countDown();
                 case "Warning" -> log.warn("[Speechmatics] 경고: {}", node.path("reason").asText(raw));
                 case "Error" -> {
@@ -277,48 +301,77 @@ public class SpeechmaticsLiveSession {
         log.info("[Speechmatics] 인식 시작 — 버퍼 {}청크 전송", pending.size());
     }
 
-    /** AddTranscript results[]를 화자 단위로 그룹핑해 세그먼트 생성 */
-    private void emitSegments(JsonNode node) {
+    /**
+     * AddTranscript results[]의 단어들을 현재 턴에 누적한다.
+     * 확정(flush)은 다음 경우에만: (1) 진짜 다른 화자(S#)로 전환, (2) 침묵(단어 간 간격 > IDLE_FLUSH),
+     * (3) 턴 길이가 MAX_TURN_SEC 초과. UU(미상)는 화자 전환으로 보지 않고 현재 화자에 이어붙인다.
+     */
+    private void addWords(JsonNode node) {
         JsonNode results = node.path("results");
         if (!results.isArray() || results.isEmpty()) return;
 
-        String curSpeaker = null;
-        StringBuilder text = new StringBuilder();
-        double segStart = -1, segEnd = 0;
+        synchronized (turnLock) {
+            for (JsonNode r : results) {
+                JsonNode alt = r.path("alternatives").path(0);
+                String content = alt.path("content").asText("");
+                if (content.isEmpty()) continue;
+                boolean isPunct = "punctuation".equals(r.path("type").asText(""));
+                double start = r.path("start_time").asDouble(turnEnd);
+                double end = r.path("end_time").asDouble(start);
 
-        for (JsonNode r : results) {
-            JsonNode alt = r.path("alternatives").path(0);
-            String content = alt.path("content").asText("");
-            if (content.isEmpty()) continue;
-            String speaker = alt.path("speaker").asText("UU");
-            boolean isPunct = "punctuation".equals(r.path("type").asText(""));
-            double start = r.path("start_time").asDouble(segEnd);
-            double end = r.path("end_time").asDouble(start);
+                if (isPunct) { // 구두점은 항상 현재 화자에 그대로 붙임
+                    turnText.append(content);
+                    turnEnd = Math.max(turnEnd, end);
+                    lastWordWallMs = System.currentTimeMillis();
+                    continue;
+                }
 
-            // 구두점은 현재 화자에 그대로 붙임 (화자 전환으로 취급하지 않음)
-            if (!isPunct && curSpeaker != null && !speaker.equals(curSpeaker)) {
-                flushSegment(curSpeaker, text, segStart, segEnd);
-                text.setLength(0);
-                segStart = -1;
+                String spk = alt.path("speaker").asText("UU");
+                boolean unknown = spk.isBlank() || "UU".equals(spk);
+                boolean active = turnStart >= 0 && turnText.length() > 0;
+
+                boolean speakerChanged = active && !unknown && turnSpeaker != null && !spk.equals(turnSpeaker);
+                boolean bigGap = active && (start - turnEnd) > IDLE_FLUSH_MS / 1000.0;
+                boolean tooLong = active && (end - turnStart) > MAX_TURN_SEC;
+                if (speakerChanged || bigGap || tooLong) flushTurn();
+
+                if (turnStart < 0) turnStart = start;
+                if (turnSpeaker == null && !unknown) turnSpeaker = spk; // 턴의 첫 확정 화자 채택
+                turnText.append(turnText.length() > 0 ? " " : "").append(content);
+                turnEnd = end;
+                lastWordWallMs = System.currentTimeMillis();
             }
-            if (!isPunct) curSpeaker = speaker;
-            if (segStart < 0) segStart = start;
-            segEnd = end;
-            if (isPunct) text.append(content);
-            else text.append(text.length() > 0 ? " " : "").append(content);
         }
-        flushSegment(curSpeaker, text, segStart, segEnd);
     }
 
-    private void flushSegment(String speaker, StringBuilder text, double start, double end) {
-        String t = text.toString().strip();
-        if (t.isEmpty() || speaker == null) return;
-        Segment seg = new Segment(mapSpeaker(speaker), t, Math.max(0, start), Math.max(0, end));
+    /** 일정 시간 새 단어가 없으면 발화가 끝난 것으로 보고 현재 턴을 확정 */
+    private void checkIdleFlush() {
+        if (closed) return;
+        synchronized (turnLock) {
+            if (turnStart >= 0 && turnText.length() > 0
+                    && System.currentTimeMillis() - lastWordWallMs > IDLE_FLUSH_MS) {
+                flushTurn();
+            }
+        }
+    }
+
+    /** 누적된 턴을 하나의 세그먼트로 확정 브로드캐스트. 반드시 turnLock 안에서 호출 */
+    private void flushTurn() {
+        String t = turnText.toString().strip();
+        double s = turnStart, e = turnEnd;
+        String spk = turnSpeaker;
+        turnText.setLength(0);
+        turnStart = -1;
+        turnEnd = 0;
+        turnSpeaker = null;
+        if (t.isEmpty()) return;
+
+        Segment seg = new Segment(mapSpeaker(spk), t, Math.max(0, s), Math.max(0, e));
         finals.add(seg);
         try {
             onSegment.accept(seg);
-        } catch (Exception e) {
-            log.debug("[Speechmatics] onSegment 콜백 오류: {}", e.getMessage());
+        } catch (Exception ex) {
+            log.debug("[Speechmatics] onSegment 콜백 오류: {}", ex.getMessage());
         }
         log.info("[Speechmatics] 자막 — [{}] \"{}\"", seg.speakerLabel(), t);
     }
@@ -349,6 +402,9 @@ public class SpeechmaticsLiveSession {
         try {
             endLatch.await(5, TimeUnit.SECONDS); // 마지막 AddTranscript / EndOfTranscript 수신
         } catch (InterruptedException ignored) {}
+        // idle 플러셔 정지 후 남은 턴을 마지막으로 확정
+        if (flusher != null) flusher.shutdownNow();
+        synchronized (turnLock) { flushTurn(); }
         closed = true;
         try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "done"); } catch (Exception ignored) {}
         log.info("[Speechmatics] 세션 종료 — 확정 세그먼트 {}개", finals.size());
