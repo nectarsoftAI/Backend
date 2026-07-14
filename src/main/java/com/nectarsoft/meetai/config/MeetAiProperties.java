@@ -88,7 +88,8 @@ public class MeetAiProperties {
         // true일 때 실시간 녹음이 OpenAI 롤링 배치 대신 Speechmatics 스트리밍을 사용
         private boolean enabled = false;
         // 확정 자막(AddTranscript) 지연 상한(초). 낮을수록 자막이 빨리 뜨지만 문장이 잘게 쪼개짐
-        private double maxDelaySec = 2.0;
+        // 3.5 = 문장 단위로 자연스럽게 뭉치는 균형점 (Railway에 SPEECHMATICS_MAX_DELAY 미설정 시 기본값)
+        private double maxDelaySec = 3.5;
         // standard | enhanced — enhanced가 정확도·화자 분리 품질이 높음(지연 소폭 증가). Speechmatics 권장값
         private String operatingPoint = "enhanced";
         // 화자 감지 민감도(0~1, 기본 0.5). 높일수록 서로 다른 화자를 더 잘 나눔(과분리 위험도 증가)

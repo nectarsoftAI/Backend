@@ -65,8 +65,13 @@ public class SpeechmaticsLiveSession {
     // ── 화자 턴(turn) 누적 ──────────────────────────────────────────
     // 실시간 diarization은 단어마다 화자 라벨이 흔들리므로(UU 미상 섞임), 단어별로 확정하지 않고
     // "같은 화자가 이어지는 동안" 누적했다가 진짜 화자 전환 / 침묵 / 최대 길이에서만 한 덩어리로 확정한다.
-    private static final long IDLE_FLUSH_MS = 700;   // 이 시간 이상 새 단어가 없으면 발화 끝으로 보고 확정
-    private static final double MAX_TURN_SEC = 15.0;  // 한 턴이 너무 길어지지 않도록 상한
+    //
+    // 문장 분리는 "오디오 시간 기준 침묵(pause)"으로 판단한다 = 자연스러운 문장 경계 감지(사실상 VAD).
+    // 벽시계 기준 idle은 max_delay(배치 도착 간격)보다 반드시 커야 한다 — 안 그러면 배치와 배치
+    // 사이(단어가 잠깐 안 오는 구간)를 발화 종료로 오판해 문장 중간에서 끊어버린다.
+    private static final double AUDIO_GAP_FLUSH_SEC = 1.0; // 오디오상 이만큼 말이 비면 문장 끝으로 봄
+    private static final double MAX_TURN_SEC = 15.0;       // 한 턴이 너무 길어지지 않도록 상한
+    private final long wallIdleFlushMs;                    // 벽시계 idle 상한(생성자에서 max_delay 기반 계산)
     private final Object turnLock = new Object();
     private String turnSpeaker;                       // 현재 턴의 확정 화자(S1/S2). UU만 본 경우 null
     private final StringBuilder turnText = new StringBuilder();
@@ -91,6 +96,9 @@ public class SpeechmaticsLiveSession {
         this.operatingPoint = operatingPoint;
         this.speakerSensitivity = speakerSensitivity;
         this.onSegment = onSegment;
+        // 벽시계 idle은 배치 도착 간격(max_delay)보다 1초 여유 크게 — 배치 사이 오판 방지.
+        // 최소 2초는 보장(발화 종료 후 마지막 문장이 확정되기까지 지연 상한).
+        this.wallIdleFlushMs = Math.max(2000L, (long) (maxDelaySec * 1000) + 1000L);
 
         this.ws = connectWs();
         sendStartRecognition();
@@ -333,8 +341,11 @@ public class SpeechmaticsLiveSession {
                 double start = r.path("start_time").asDouble(turnEnd);
                 double end = r.path("end_time").asDouble(start);
 
-                if (isPunct) { // 구두점은 항상 현재 화자에 그대로 붙임
-                    turnText.append(content);
+                if (isPunct) {
+                    // 턴이 아직 시작 안 됐는데(단어 0개) 온 구두점은 앞 문장의 꼬리 → 버림
+                    // (안 버리면 새 세그먼트가 ". 문장..." 처럼 마침표로 시작함)
+                    if (turnText.length() == 0) continue;
+                    turnText.append(content); // 진행 중인 턴에는 그대로 붙임
                     turnEnd = Math.max(turnEnd, end);
                     lastWordWallMs = System.currentTimeMillis();
                     continue;
@@ -345,7 +356,7 @@ public class SpeechmaticsLiveSession {
                 boolean active = turnStart >= 0 && turnText.length() > 0;
 
                 boolean speakerChanged = active && !unknown && turnSpeaker != null && !spk.equals(turnSpeaker);
-                boolean bigGap = active && (start - turnEnd) > IDLE_FLUSH_MS / 1000.0;
+                boolean bigGap = active && (start - turnEnd) > AUDIO_GAP_FLUSH_SEC; // 오디오상 침묵 = 문장 경계
                 boolean tooLong = active && (end - turnStart) > MAX_TURN_SEC;
                 if (speakerChanged || bigGap || tooLong) flushTurn();
 
@@ -362,8 +373,10 @@ public class SpeechmaticsLiveSession {
     private void checkIdleFlush() {
         if (closed) return;
         synchronized (turnLock) {
+            // 벽시계 idle은 max_delay보다 크게 잡아, 발화가 실제로 멈췄을 때만 마지막 턴을 확정
+            // (배치 도착 간격을 발화 종료로 오판해 문장을 끊지 않도록)
             if (turnStart >= 0 && turnText.length() > 0
-                    && System.currentTimeMillis() - lastWordWallMs > IDLE_FLUSH_MS) {
+                    && System.currentTimeMillis() - lastWordWallMs > wallIdleFlushMs) {
                 flushTurn();
             }
         }
@@ -371,7 +384,8 @@ public class SpeechmaticsLiveSession {
 
     /** 누적된 턴을 하나의 세그먼트로 확정 브로드캐스트. 반드시 turnLock 안에서 호출 */
     private void flushTurn() {
-        String t = turnText.toString().strip();
+        // 앞쪽 문장부호(. , ! ? … ·)와 공백 제거 — 리딩 "." 방어 (턴 시작 전 구두점이 새어든 경우 대비)
+        String t = turnText.toString().replaceFirst("^[.,!?…·\\s]+", "").strip();
         double s = turnStart, e = turnEnd;
         String spk = turnSpeaker;
         turnText.setLength(0);
