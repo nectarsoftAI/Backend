@@ -55,6 +55,8 @@ meetai:
     # 에너지 VAD 노이즈 게이트 — 무음/노이즈 프레임만 0으로(타임라인 유지). 화자분리·타임스탬프 안전
     noise-gate: ${SPEECHMATICS_NOISE_GATE:true}
     noise-gate-threshold: ${SPEECHMATICS_NOISE_GATE_THRESHOLD:180}
+    # 말하는 중 미리보기 자막(반응속도↑). 프론트가 is_final 구분 렌더링 준비되면 true로
+    partials: ${SPEECHMATICS_PARTIALS:false}
 
   livekit:
     api-key: ${LIVEKIT_API_KEY:}

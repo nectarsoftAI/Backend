@@ -138,7 +138,7 @@ public class LiveService {
             log.info("[Live] Speechmatics 스트리밍 세션 시작 — meetingId={}", k);
             return new SpeechmaticsLiveSession(cfg.getApiKey(), cfg.getUrl(), cfg.getLanguage(),
                     cfg.getMaxDelaySec(), cfg.getOperatingPoint(), cfg.getSpeakerSensitivity(),
-                    cfg.isNoiseGate(), cfg.getNoiseGateThreshold(),
+                    cfg.isNoiseGate(), cfg.getNoiseGateThreshold(), cfg.isPartials(),
                     seg -> broadcastLiveSegment(k, seg));
         });
     }
@@ -152,7 +152,8 @@ public class LiveService {
                     "start_sec", seg.startSec(),
                     "end_sec", seg.endSec(),
                     "text", seg.text(),
-                    "confidence", 1.0)));
+                    "confidence", 1.0,
+                    "is_final", seg.isFinal())));   // false=말하는 중 미리보기(교체), true=확정
         } catch (Exception e) {
             log.debug("[Live] Speechmatics 자막 브로드캐스트 실패: {}", e.getMessage());
         }

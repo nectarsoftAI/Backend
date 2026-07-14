@@ -98,6 +98,9 @@ public class MeetAiProperties {
         private boolean noiseGate = true;
         // 무음 판정 RMS 임계값(0~32767). 낮게 잡아 실제 음성은 안 건드림. 노이즈 플로어만 제거
         private int noiseGateThreshold = 180;
+        // partial(말하는 중 미리보기) 자막 — 반응속도 향상용. is_final:false로 브로드캐스트.
+        // 프론트가 is_final 구분 렌더링(partial 교체) 지원할 때 켤 것. 기본 off(현재 프론트 append 방식 보호)
+        private boolean partials = false;
     }
 
     @Data

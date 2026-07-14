@@ -38,8 +38,8 @@ public class SpeechmaticsLiveSession {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int SAMPLE_RATE = 16000;
 
-    /** 화자 라벨이 붙은 확정 자막 한 구간 */
-    public record Segment(String speakerLabel, String text, double startSec, double endSec) {}
+    /** 화자 라벨이 붙은 자막 한 구간. isFinal=false면 말하는 중 미리보기(partial), true면 확정 */
+    public record Segment(String speakerLabel, String text, double startSec, double endSec, boolean isFinal) {}
 
     private final String apiKey;
     private final String url;
@@ -57,6 +57,9 @@ public class SpeechmaticsLiveSession {
     private final boolean noiseGate;
     private final int noiseGateThreshold;
     private int gateHangover = 0;                        // sendPcm 호출 간 유지되는 hangover 카운터
+
+    // partial(말하는 중 미리보기) 자막: 즉시 반응용. 확정(final)은 turn flush로 문장 단위 유지.
+    private final boolean partials;
 
     private volatile WebSocket ws;
     private final Object sendLock = new Object();
@@ -97,7 +100,7 @@ public class SpeechmaticsLiveSession {
 
     public SpeechmaticsLiveSession(String apiKey, String url, String language, double maxDelaySec,
                                    String operatingPoint, double speakerSensitivity,
-                                   boolean noiseGate, int noiseGateThreshold,
+                                   boolean noiseGate, int noiseGateThreshold, boolean partials,
                                    Consumer<Segment> onSegment) {
         this.apiKey = apiKey;
         this.url = url;
@@ -107,6 +110,7 @@ public class SpeechmaticsLiveSession {
         this.speakerSensitivity = speakerSensitivity;
         this.noiseGate = noiseGate;
         this.noiseGateThreshold = noiseGateThreshold;
+        this.partials = partials;
         this.onSegment = onSegment;
         // 벽시계 idle은 배치 도착 간격(max_delay)보다 1초 여유 크게 — 배치 사이 오판 방지.
         // 최소 2초는 보장(발화 종료 후 마지막 문장이 확정되기까지 지연 상한).
@@ -143,7 +147,7 @@ public class SpeechmaticsLiveSession {
         tc.put("diarization", "speaker");
         tc.put("speaker_diarization_config", diarConfig);
         tc.put("max_delay", maxDelaySec);
-        tc.put("enable_partials", false);
+        tc.put("enable_partials", partials); // 말하는 중 미리보기 → 즉시 반응(확정은 turn flush로 문장 유지)
 
         sendJson(Map.of(
                 "message", "StartRecognition",
@@ -338,6 +342,7 @@ public class SpeechmaticsLiveSession {
             JsonNode node = MAPPER.readTree(raw);
             switch (node.path("message").asText("")) {
                 case "RecognitionStarted" -> flushPreBuffer();
+                case "AddPartialTranscript" -> { if (partials) emitPartial(node); }
                 case "AddTranscript" -> addWords(node);
                 case "EndOfTranscript" -> endLatch.countDown();
                 case "Warning" -> log.warn("[Speechmatics] 경고: {}", node.path("reason").asText(raw));
@@ -411,6 +416,42 @@ public class SpeechmaticsLiveSession {
         }
     }
 
+    /**
+     * AddPartialTranscript → 말하는 중 미리보기 자막 1건 브로드캐스트(isFinal=false).
+     * DB에는 저장하지 않고 화면 즉시 표시용으로만 쓴다. 확정(AddTranscript→flushTurn)이 오면 교체됨.
+     */
+    private void emitPartial(JsonNode node) {
+        JsonNode results = node.path("results");
+        if (!results.isArray() || results.isEmpty()) return;
+        StringBuilder sb = new StringBuilder();
+        String spk = null;
+        double start = -1, end = 0;
+        for (JsonNode r : results) {
+            JsonNode alt = r.path("alternatives").path(0);
+            String content = alt.path("content").asText("");
+            if (content.isEmpty()) continue;
+            boolean isPunct = "punctuation".equals(r.path("type").asText(""));
+            if (!isPunct) {
+                String s = alt.path("speaker").asText("UU");
+                if (spk == null && !s.isBlank() && !"UU".equals(s)) spk = s;
+            }
+            double st = r.path("start_time").asDouble(end);
+            end = r.path("end_time").asDouble(st);
+            if (start < 0) start = st;
+            if (isPunct) sb.append(content);
+            else sb.append(sb.length() > 0 ? " " : "").append(content);
+        }
+        String t = sb.toString().replaceFirst("^[.,!?…·\\s]+", "").strip();
+        if (t.isEmpty()) return;
+        synchronized (turnLock) { if (spk == null) spk = turnSpeaker; } // 화자 미확정이면 현재 턴 화자
+        Segment seg = new Segment(mapSpeaker(spk), t, Math.max(0, start), Math.max(0, end), false);
+        try {
+            onSegment.accept(seg);
+        } catch (Exception e) {
+            log.debug("[Speechmatics] partial 콜백 오류: {}", e.getMessage());
+        }
+    }
+
     /** 일정 시간 새 단어가 없으면 발화가 끝난 것으로 보고 현재 턴을 확정 */
     private void checkIdleFlush() {
         if (closed) return;
@@ -436,7 +477,7 @@ public class SpeechmaticsLiveSession {
         turnSpeaker = null;
         if (t.isEmpty()) return;
 
-        Segment seg = new Segment(mapSpeaker(spk), t, Math.max(0, s), Math.max(0, e));
+        Segment seg = new Segment(mapSpeaker(spk), t, Math.max(0, s), Math.max(0, e), true);
         finals.add(seg);
         try {
             onSegment.accept(seg);
