@@ -38,10 +38,10 @@ import java.util.stream.Collectors;
 
 /**
  * 실시간 녹음 세션 (한 마이크, 다중 화자)
- * - 오디오를 파일로 누적하면서 주기적으로 OpenAI gpt-4o-transcribe-diarize(배치)로 변환해
- *   화자 라벨(SPEAKER_A/B) 자막을 준실시간 브로드캐스트 (~15초 지연)
- *   ※ Realtime WS용 diarize는 OpenAI가 아직 미개방이라 빠른 배치를 롤링으로 사용
- * - 종료 시 전체 오디오를 최종 변환해 회의록 transcripts 저장
+ * - 실시간 자막 엔진 우선순위: Deepgram 스트리밍(deepgram.enabled) >
+ *   Speechmatics 스트리밍(speechmatics.enabled) > OpenAI 롤링 배치(기본, ~15초 지연)
+ * - 오디오는 항상 파일로도 누적 (스트리밍 실패 시 배치 폴백 + 보관용)
+ * - 종료 시 스트리밍 결과가 있으면 그대로 회의록 저장, 없으면 전체 오디오 배치 변환
  */
 @Slf4j
 @Service
@@ -69,6 +69,10 @@ public class LiveService {
     private final Map<String, Recording> recordings = new ConcurrentHashMap<>();
     // Speechmatics 스트리밍 세션 (speechmatics.enabled일 때만 사용) — meetingId별 1개
     private final Map<String, SpeechmaticsLiveSession> liveSessions = new ConcurrentHashMap<>();
+    // Deepgram 스트리밍 세션 (deepgram.enabled일 때 Speechmatics보다 우선) — meetingId별 1개.
+    // 연결 실패한 회의는 dgFailed에 기록해 청크마다 재연결을 시도하지 않는다
+    private final Map<String, DeepgramStreamingSession> dgSessions = new ConcurrentHashMap<>();
+    private final java.util.Set<String> dgFailed = ConcurrentHashMap.newKeySet();
 
     private final ScheduledExecutorService diarizeExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "live-diarize");
@@ -117,8 +121,16 @@ public class LiveService {
         } catch (Exception e) {
             log.warn("[Live] 녹음 누적 실패 — meetingId={}: {}", meetingId, e.getMessage());
         }
-        // Speechmatics 스트리밍: 파일 누적과 별개로 같은 청크를 실시간 전송 (파일은 종료 시 폴백/보관용)
-        if (speechmaticsActive()) {
+        // 실시간 스트리밍 STT (우선순위: Deepgram > Speechmatics) —
+        // 파일 누적과 별개로 같은 청크를 전송, 파일은 종료 시 폴백/보관용
+        Recording rec = recordings.get(meetingId);
+        boolean pcm = rec != null && rec.pcm;
+        if (deepgramActive() && pcm) {
+            if (!dgFailed.contains(meetingId)) {
+                DeepgramStreamingSession dg = dgSessions.computeIfAbsent(meetingId, this::openDeepgramSession);
+                if (dg != null) dg.sendAudio(data);
+            }
+        } else if (speechmaticsActive()) {
             try {
                 liveSessionFor(meetingId).sendAudio(data);
             } catch (Exception e) {
@@ -130,6 +142,45 @@ public class LiveService {
     private boolean speechmaticsActive() {
         MeetAiProperties.Speechmatics s = props.getSpeechmatics();
         return s.isEnabled() && s.getApiKey() != null && !s.getApiKey().isBlank();
+    }
+
+    private boolean deepgramActive() {
+        MeetAiProperties.Deepgram d = props.getDeepgram();
+        return d.isEnabled() && d.getApiKey() != null && !d.getApiKey().isBlank();
+    }
+
+    private DeepgramStreamingSession openDeepgramSession(String meetingId) {
+        try {
+            MeetAiProperties.Deepgram cfg = props.getDeepgram();
+            log.info("[Live] Deepgram 스트리밍 세션 시작 — meetingId={}", meetingId);
+            return new DeepgramStreamingSession(cfg.getApiKey(), cfg.getModel(), cfg.getLanguage(),
+                    SAMPLE_RATE, cfg.getEndpointingMs(), cfg.isPartials(),
+                    seg -> broadcastDeepgramSegment(meetingId, seg));
+        } catch (Exception e) {
+            dgFailed.add(meetingId);
+            log.error("[Live] Deepgram 연결 실패 — Speechmatics/롤링으로 폴백 불가(이 회의는 종료 시 배치 처리), meetingId={}: {}",
+                    meetingId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** Deepgram 자막을 프론트(LiveSTTService.ts) segment 스펙으로 브로드캐스트 */
+    private void broadcastDeepgramSegment(String meetingId, DeepgramStreamingSession.Segment seg) {
+        try {
+            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
+                    "type", "segment",
+                    "speaker_label", seg.speakerLabel(),
+                    "start_sec", seg.startSec(),
+                    "end_sec", seg.endSec(),
+                    "text", seg.text(),
+                    "confidence", seg.confidence(),
+                    "is_final", seg.isFinal())));   // false=말하는 중 미리보기(교체), true=확정
+            if (seg.isFinal()) {
+                log.info("[Live] 화자 자막(Deepgram) — [{}] \"{}\"", seg.speakerLabel(), seg.text());
+            }
+        } catch (Exception e) {
+            log.debug("[Live] Deepgram 자막 브로드캐스트 실패: {}", e.getMessage());
+        }
     }
 
     private SpeechmaticsLiveSession liveSessionFor(String meetingId) {
@@ -175,13 +226,15 @@ public class LiveService {
 
         Path recording = finishRecording(meetingId);
         SpeechmaticsLiveSession live = liveSessions.remove(meetingId);
-        if (recording != null || live != null) {
+        DeepgramStreamingSession dg = dgSessions.remove(meetingId);
+        dgFailed.remove(meetingId);
+        if (recording != null || live != null || dg != null) {
             // A안: 화면은 즉시 종료(session_ended + WS close), 최종 화자 분리는 백그라운드로.
             // 프론트는 GET /meetings/{id}의 status가 PROCESSING→COMPLETED 될 때 완성 회의록을 폴링한다.
             meeting.setStatus(MeetingStatus.PROCESSING);
             meetingRepo.save(meeting);
             notifySessionEnded(meetingId);
-            diarizeExecutor.submit(() -> finalizeTranscripts(mid, recording, live));
+            diarizeExecutor.submit(() -> finalizeTranscripts(mid, recording, live, dg));
             log.info("[Live] 세션 종료(즉시) — 최종 화자 분리는 백그라운드 진행, meetingId={}", meetingId);
             return;
         }
@@ -204,8 +257,8 @@ public class LiveService {
     // ── 준실시간: 주기적으로 누적 오디오를 화자 분리해 새 구간만 브로드캐스트 ──
 
     private void rollingPass() {
-        // Speechmatics 스트리밍이 켜져 있으면 실시간 자막은 스트리밍 세션이 담당 → 롤링 배치 생략
-        if (speechmaticsActive()) return;
+        // 스트리밍 엔진(Deepgram/Speechmatics)이 켜져 있으면 실시간 자막은 스트리밍 세션이 담당 → 롤링 배치 생략
+        if (deepgramActive() || speechmaticsActive()) return;
         for (Map.Entry<String, Recording> entry : recordings.entrySet()) {
             String meetingId = entry.getKey();
             Recording r = entry.getValue();
@@ -256,11 +309,12 @@ public class LiveService {
 
     // ── 종료: 전체 오디오 최종 변환 → 회의록 저장 ──────────────────────
 
-    private void finalizeTranscripts(UUID mid, Path audio, SpeechmaticsLiveSession live) {
+    private void finalizeTranscripts(UUID mid, Path audio, SpeechmaticsLiveSession live,
+                                     DeepgramStreamingSession dg) {
         Meeting meeting = meetingRepo.findById(mid).orElse(null);
         if (meeting == null) return;
         try {
-            List<DiarizedSegment> segments = collectFinalSegments(mid, audio, live);
+            List<DiarizedSegment> segments = collectFinalSegments(mid, audio, live, dg);
             if (segments.isEmpty()) {
                 log.warn("[Live] 변환 결과 없음 — meetingId={}", mid);
                 return;
@@ -306,11 +360,33 @@ public class LiveService {
 
     /**
      * 최종 세그먼트 확보 — 우선순위:
-     * 1) Speechmatics 스트리밍 결과(있으면 그대로 사용, 추가 API 호출 없음)
-     * 2) OpenAI gpt-4o-transcribe-diarize 배치(스트리밍 미사용 또는 결과 없음)
-     * 3) 일반 전사(단일 화자) — diarize 실패 시 DB 공백 방지
+     * 1) Deepgram 스트리밍 결과(있으면 그대로 사용, 추가 API 호출 없음)
+     * 2) Speechmatics 스트리밍 결과(위와 동일)
+     * 3) OpenAI gpt-4o-transcribe-diarize 배치(스트리밍 미사용 또는 결과 없음)
+     * 4) 일반 전사(단일 화자) — diarize 실패 시 DB 공백 방지
      */
-    private List<DiarizedSegment> collectFinalSegments(UUID mid, Path audio, SpeechmaticsLiveSession live) {
+    private List<DiarizedSegment> collectFinalSegments(UUID mid, Path audio,
+                                                       SpeechmaticsLiveSession live,
+                                                       DeepgramStreamingSession dg) {
+        if (dg != null) {
+            try {
+                dg.close();          // CloseStream → 서버가 잔여 확정 자막 플러시
+                dg.awaitClose(3000); // 플러시 도착 대기
+                List<DiarizedSegment> segs = dg.getSegments().stream()
+                        .map(s -> new DiarizedSegment(
+                                s.speakerLabel().replaceFirst("^SPEAKER_", ""), // 저장 루프가 다시 SPEAKER_ 접두
+                                s.text(), s.startSec(), s.endSec()))
+                        .collect(Collectors.toList());
+                if (!segs.isEmpty()) {
+                    log.info("[Live] Deepgram 스트리밍 결과로 회의록 확정 — meetingId={}, segments={}",
+                            mid, segs.size());
+                    return segs;
+                }
+                log.warn("[Live] Deepgram 결과 없음 — 다음 폴백, meetingId={}", mid);
+            } catch (Exception e) {
+                log.error("[Live] Deepgram 종료 처리 실패 — 다음 폴백, meetingId={}: {}", mid, e.getMessage());
+            }
+        }
         if (live != null) {
             try {
                 live.close(); // EndOfStream 후 남은 확정 자막까지 수신
