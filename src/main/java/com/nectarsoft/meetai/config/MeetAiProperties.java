@@ -17,6 +17,7 @@ public class MeetAiProperties {
     private Openai openai = new Openai();
     private AssemblyAi assemblyai = new AssemblyAi();
     private Speechmatics speechmatics = new Speechmatics();
+    private Deepgram deepgram = new Deepgram();
     private Diarization diarization = new Diarization();
     private Llm llm = new Llm();
     private LiveKit livekit = new LiveKit();
@@ -100,6 +101,20 @@ public class MeetAiProperties {
         private int noiseGateThreshold = 180;
         // partial(말하는 중 미리보기) 자막 — 반응속도 향상용. is_final:false로 브로드캐스트.
         // 프론트가 is_final 구분 렌더링(partial 교체) 지원할 때 켤 것. 기본 off(현재 프론트 append 방식 보호)
+        private boolean partials = false;
+    }
+
+    @Data
+    public static class Deepgram {
+        // Railway 환경변수 DEEPGRAM_API_KEY 로 주입
+        private String apiKey = "";
+        // true일 때 실시간 녹음이 Deepgram nova-3 스트리밍 사용 — Speechmatics보다 우선
+        private boolean enabled = false;
+        private String model = "nova-3";
+        private String language = "ko";
+        // 발화 종료 판정 무음(ms). 작을수록 확정 자막이 빨라지는 대신 세그먼트가 잘게 쪼개짐 (공식 예제 10)
+        private int endpointingMs = 10;
+        // partial(말하는 중 미리보기) — is_final:false 세그먼트 브로드캐스트. Speechmatics와 동일 규칙
         private boolean partials = false;
     }
 

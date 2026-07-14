@@ -58,6 +58,18 @@ meetai:
     # 말하는 중 미리보기 자막(반응속도↑). 프론트가 is_final 구분 렌더링 준비되면 true로
     partials: ${SPEECHMATICS_PARTIALS:false}
 
+  # 실시간 녹음 화자 분리 — Deepgram nova-3 스트리밍 (한국어 ko + diarize, ~300ms)
+  # DEEPGRAM_ENABLED=true 로 켜면 Speechmatics/OpenAI 롤링보다 우선 사용
+  deepgram:
+    api-key: ${DEEPGRAM_API_KEY:}
+    enabled: ${DEEPGRAM_ENABLED:false}
+    model: ${DEEPGRAM_MODEL:nova-3}
+    language: ${DEEPGRAM_LANGUAGE:ko}
+    # 발화 종료 판정 무음(ms). 작을수록 확정 자막이 빨라지는 대신 잘게 쪼개짐 (공식 예제 10)
+    endpointing-ms: ${DEEPGRAM_ENDPOINTING_MS:10}
+    # 말하는 중 미리보기(is_final:false) — 프론트가 partial 교체 렌더링 지원 시 켤 것
+    partials: ${DEEPGRAM_PARTIALS:false}
+
   livekit:
     api-key: ${LIVEKIT_API_KEY:}
     api-secret: ${LIVEKIT_API_SECRET:}
