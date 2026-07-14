@@ -20,8 +20,12 @@ import java.util.function.Consumer;
  * Deepgram 실시간 STT + 화자 분리 WebSocket 세션 (라이브 녹음용)
  * - linear16 PCM(16kHz mono)을 그대로 스트리밍하고, is_final 결과의 word.speaker로
  *   화자 라벨(SPEAKER_A/B/…)을 실시간 부여한다 (diarize=true → v1 스트리밍 diarizer)
+ * - 문장 단위 확정: is_final 조각을 화자 턴(turn)으로 누적했다가 화자 전환 /
+ *   speech_final(VAD 무음 감지) / 최대 길이에서만 한 덩어리로 방출한다.
+ *   Deepgram은 침묵을 감지하면 speech_final=true를 주므로 별도 idle 타이머가 필요 없다
+ *   (Speechmatics의 화자 턴 누적과 동일한 규칙)
  * - partials=true면 interim_results를 켜고 말하는 중 자막을 isFinal=false 세그먼트로 전달
- *   (Speechmatics partial과 동일 규칙 — 확정 자막만 내부 누적/저장 대상)
+ *   (확정 자막만 내부 누적/저장 대상)
  * - close()는 CloseStream을 보내 서버가 잔여 final을 플러시하게 하고,
  *   awaitClose()로 그 도착을 기다린다. getSegments()는 확정 세그먼트만 반환
  */
@@ -33,12 +37,22 @@ public class DeepgramStreamingSession {
 
     private static final String WS_URL = "wss://api.deepgram.com/v1/listen";
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    // 한 턴이 무한히 길어지지 않도록 상한 — 쉼 없이 말해도 이 길이마다 자막이 나간다
+    private static final double MAX_TURN_SEC = 15.0;
 
     private final WebSocket webSocket;
     private final Consumer<Segment> onSegment;
     private final List<Segment> finals = Collections.synchronizedList(new ArrayList<>());
     private final CountDownLatch closedLatch = new CountDownLatch(1);
     private volatile boolean closed = false;
+
+    // ── 화자 턴 누적 상태 (turnLock으로 보호) ─────────────────────────
+    private final Object turnLock = new Object();
+    private Integer turnSpeaker;
+    private final StringBuilder turnText = new StringBuilder();
+    private double turnStart = -1;
+    private double turnEnd = 0;
+    private double turnConfidence = 1.0;
 
     public DeepgramStreamingSession(String apiKey, String model, String language, int sampleRate,
                                     int endpointingMs, boolean partials,
@@ -86,11 +100,32 @@ public class DeepgramStreamingSession {
         }
     }
 
-    /** 확정(isFinal=true) 세그먼트만 — 회의록 저장용 */
+    /** 확정(isFinal=true) 세그먼트만 — 회의록 저장용. 미확정 턴이 남아 있으면 먼저 플러시 */
     public List<Segment> getSegments() {
+        synchronized (turnLock) {
+            flushTurnLocked();
+        }
         synchronized (finals) {
             return new ArrayList<>(finals);
         }
+    }
+
+    /** 누적 중인 화자 턴을 확정 세그먼트로 방출 (turnLock 보유 상태에서 호출) */
+    private void flushTurnLocked() {
+        String text = turnText.toString().strip();
+        if (turnSpeaker != null && !text.isEmpty()) {
+            Segment seg = new Segment(speakerLabel(turnSpeaker), text,
+                    turnStart, turnEnd, turnConfidence, true);
+            finals.add(seg);
+            try {
+                onSegment.accept(seg);
+            } catch (Exception e) {
+                log.debug("[Deepgram] 세그먼트 콜백 오류: {}", e.getMessage());
+            }
+        }
+        turnSpeaker = null;
+        turnText.setLength(0);
+        turnStart = -1;
     }
 
     private class Listener implements WebSocket.Listener {
@@ -115,8 +150,12 @@ public class DeepgramStreamingSession {
                         JsonNode alt = node.path("channel").path("alternatives").path(0);
                         JsonNode words = alt.path("words");
                         if (!words.isArray() || words.isEmpty()) return;
-                        boolean isFinal = node.path("is_final").asBoolean(false);
-                        emitBySpeaker(words, alt.path("confidence").asDouble(1.0), isFinal);
+                        double conf = alt.path("confidence").asDouble(1.0);
+                        if (node.path("is_final").asBoolean(false)) {
+                            appendFinalWords(words, conf, node.path("speech_final").asBoolean(false));
+                        } else {
+                            emitInterimPreview(words, conf); // partials=true일 때만 수신
+                        }
                     }
                     case "SpeechStarted" -> log.debug("[Deepgram] 발화 시작 감지");
                     case "UtteranceEnd", "Metadata" -> { /* 무시 */ }
@@ -127,8 +166,43 @@ public class DeepgramStreamingSession {
             }
         }
 
-        /** 연속된 같은 화자의 단어들을 하나의 세그먼트로 묶어 방출 */
-        private void emitBySpeaker(JsonNode words, double confidence, boolean isFinal) {
+        /**
+         * 확정(is_final) 단어들을 화자 턴에 누적.
+         * 플러시 조건: 화자 전환 / speech_final(무음 감지) / 턴 최대 길이 초과.
+         * is_final 조각은 문장 중간에서도 끊겨 오므로 바로 방출하면 자막이 잘게 쪼개진다.
+         */
+        private void appendFinalWords(JsonNode words, double confidence, boolean speechFinal) {
+            synchronized (turnLock) {
+                for (JsonNode w : words) {
+                    String token = w.path("punctuated_word").asText("");
+                    if (token.isEmpty()) token = w.path("word").asText("");
+                    if (token.isEmpty()) continue;
+
+                    int sp = w.path("speaker").asInt(0);
+                    if (turnSpeaker != null && sp != turnSpeaker) {
+                        flushTurnLocked(); // 진짜 화자 전환 — 이전 화자 턴 확정
+                    }
+                    if (turnSpeaker == null) {
+                        turnSpeaker = sp;
+                        turnStart = w.path("start").asDouble(0);
+                    }
+                    if (turnText.length() > 0) turnText.append(' ');
+                    turnText.append(token);
+                    turnEnd = w.path("end").asDouble(0);
+                    turnConfidence = confidence;
+
+                    if (turnEnd - turnStart >= MAX_TURN_SEC) {
+                        flushTurnLocked(); // 쉼 없는 장광설도 주기적으로 자막 방출
+                    }
+                }
+                if (speechFinal) {
+                    flushTurnLocked(); // VAD가 무음(endpointing) 감지 — 문장 경계로 확정
+                }
+            }
+        }
+
+        /** 말하는 중 미리보기 — 누적 없이 화자별로 묶어 isFinal=false로 방출 */
+        private void emitInterimPreview(JsonNode words, double confidence) {
             Integer speaker = null;
             StringBuilder text = new StringBuilder();
             double start = 0, end = 0;
@@ -139,7 +213,7 @@ public class DeepgramStreamingSession {
 
                 int sp = w.path("speaker").asInt(0);
                 if (speaker == null || sp != speaker) {
-                    if (speaker != null) emit(speaker, text.toString(), start, end, confidence, isFinal);
+                    if (speaker != null) previewCallback(speaker, text.toString(), start, end, confidence);
                     speaker = sp;
                     text.setLength(0);
                     start = w.path("start").asDouble(0);
@@ -148,17 +222,14 @@ public class DeepgramStreamingSession {
                 text.append(token);
                 end = w.path("end").asDouble(0);
             }
-            if (speaker != null) emit(speaker, text.toString(), start, end, confidence, isFinal);
+            if (speaker != null) previewCallback(speaker, text.toString(), start, end, confidence);
         }
 
-        private void emit(int speaker, String text, double start, double end,
-                          double confidence, boolean isFinal) {
+        private void previewCallback(int speaker, String text, double start, double end, double confidence) {
             String t = text.strip();
             if (t.isEmpty()) return;
-            Segment seg = new Segment(speakerLabel(speaker), t, start, end, confidence, isFinal);
-            if (isFinal) finals.add(seg);
             try {
-                onSegment.accept(seg);
+                onSegment.accept(new Segment(speakerLabel(speaker), t, start, end, confidence, false));
             } catch (Exception e) {
                 log.debug("[Deepgram] 세그먼트 콜백 오류: {}", e.getMessage());
             }
@@ -167,6 +238,9 @@ public class DeepgramStreamingSession {
         @Override
         public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
             closed = true;
+            synchronized (turnLock) {
+                flushTurnLocked(); // 서버가 닫기 전 마지막 조각까지 확정
+            }
             closedLatch.countDown();
             log.info("[Deepgram] 세션 종료 — code={}, reason={}", statusCode, reason);
             return null;

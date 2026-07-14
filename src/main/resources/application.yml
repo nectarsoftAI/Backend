@@ -65,8 +65,9 @@ meetai:
     enabled: ${DEEPGRAM_ENABLED:false}
     model: ${DEEPGRAM_MODEL:nova-3}
     language: ${DEEPGRAM_LANGUAGE:ko}
-    # 발화 종료 판정 무음(ms). 작을수록 확정 자막이 빨라지는 대신 잘게 쪼개짐 (공식 예제 10)
-    endpointing-ms: ${DEEPGRAM_ENDPOINTING_MS:10}
+    # 발화 종료(문장 경계) 판정 무음(ms). 작을수록 확정이 빨라지는 대신 문장이 잘게 쪼개짐
+    # 10(공식 예제)은 한국어 숨 고르기에도 끊김 → 500이 자연스러운 균형점
+    endpointing-ms: ${DEEPGRAM_ENDPOINTING_MS:500}
     # 말하는 중 미리보기(is_final:false) — 프론트가 partial 교체 렌더링 지원 시 켤 것
     partials: ${DEEPGRAM_PARTIALS:false}
 
