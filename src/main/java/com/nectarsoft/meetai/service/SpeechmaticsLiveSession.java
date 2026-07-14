@@ -49,6 +49,15 @@ public class SpeechmaticsLiveSession {
     private final double speakerSensitivity;
     private final Consumer<Segment> onSegment;
 
+    // ── 에너지 VAD 노이즈 게이트 ────────────────────────────────────
+    // 무음/노이즈 프레임을 0으로 치환(프레임 수 유지 → 타임라인·타임스탬프 안전). Speechmatics로
+    // 깨끗한 무음이 가서 노이즈 헛자막이 줄어든다. voiced 뒤 hangover로 말꼬리 클리핑 방지.
+    private static final int GATE_FRAME_BYTES = 960;     // 30ms @ 16kHz 16-bit mono
+    private static final int GATE_HANGOVER_FRAMES = 6;   // voiced 후 180ms는 유지(자음/말꼬리 보존)
+    private final boolean noiseGate;
+    private final int noiseGateThreshold;
+    private int gateHangover = 0;                        // sendPcm 호출 간 유지되는 hangover 카운터
+
     private volatile WebSocket ws;
     private final Object sendLock = new Object();
     private volatile boolean started = false;   // RecognitionStarted 수신 여부
@@ -88,6 +97,7 @@ public class SpeechmaticsLiveSession {
 
     public SpeechmaticsLiveSession(String apiKey, String url, String language, double maxDelaySec,
                                    String operatingPoint, double speakerSensitivity,
+                                   boolean noiseGate, int noiseGateThreshold,
                                    Consumer<Segment> onSegment) {
         this.apiKey = apiKey;
         this.url = url;
@@ -95,6 +105,8 @@ public class SpeechmaticsLiveSession {
         this.maxDelaySec = maxDelaySec;
         this.operatingPoint = operatingPoint;
         this.speakerSensitivity = speakerSensitivity;
+        this.noiseGate = noiseGate;
+        this.noiseGateThreshold = noiseGateThreshold;
         this.onSegment = onSegment;
         // 벽시계 idle은 배치 도착 간격(max_delay)보다 1초 여유 크게 — 배치 사이 오판 방지.
         // 최소 2초는 보장(발화 종료 후 마지막 문장이 확정되기까지 지연 상한).
@@ -228,6 +240,7 @@ public class SpeechmaticsLiveSession {
     /** PCM 바이너리 전송 — RecognitionStarted 이전이면 버퍼링 */
     private void sendPcm(byte[] pcm) {
         if (closed) return;
+        if (noiseGate) applyNoiseGate(pcm); // 무음/노이즈 프레임 0 치환 (프레임 수 유지)
         synchronized (sendLock) {
             if (!started) {
                 preBuffer.add(pcm);
@@ -235,6 +248,35 @@ public class SpeechmaticsLiveSession {
             }
         }
         sendBinary(pcm);
+    }
+
+    /**
+     * 에너지 VAD 노이즈 게이트 — 30ms 프레임 단위로 RMS가 임계값 미만이면 0으로 치환.
+     * 바이트 수는 그대로라 오디오 타임라인/타임스탬프가 보존된다. voiced 뒤 hangover 프레임은
+     * 유지해 조용한 자음·말꼬리가 잘리지 않게 한다. 남는 부분(<1프레임)은 건드리지 않고 통과.
+     */
+    private void applyNoiseGate(byte[] pcm) {
+        int frames = pcm.length / GATE_FRAME_BYTES;
+        for (int f = 0; f < frames; f++) {
+            int base = f * GATE_FRAME_BYTES;
+            if (rms(pcm, base, GATE_FRAME_BYTES) > noiseGateThreshold) {
+                gateHangover = GATE_HANGOVER_FRAMES;      // 발화 → 유지 + hangover 리셋
+            } else if (gateHangover > 0) {
+                gateHangover--;                            // 말꼬리 보존 구간 → 유지
+            } else {
+                java.util.Arrays.fill(pcm, base, base + GATE_FRAME_BYTES, (byte) 0); // 무음 → 0
+            }
+        }
+    }
+
+    private static double rms(byte[] b, int off, int len) {
+        long sum = 0;
+        int n = len / 2;
+        for (int i = off; i + 1 < off + len; i += 2) {
+            int s = (short) ((b[i] & 0xFF) | (b[i + 1] << 8));
+            sum += (long) s * s;
+        }
+        return n == 0 ? 0 : Math.sqrt((double) sum / n);
     }
 
     private void sendBinary(byte[] pcm) {

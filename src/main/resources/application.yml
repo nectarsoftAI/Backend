@@ -52,6 +52,9 @@ meetai:
     max-delay-sec: ${SPEECHMATICS_MAX_DELAY:3.5}
     operating-point: ${SPEECHMATICS_OPERATING_POINT:enhanced}
     speaker-sensitivity: ${SPEECHMATICS_SPEAKER_SENSITIVITY:0.6}
+    # 에너지 VAD 노이즈 게이트 — 무음/노이즈 프레임만 0으로(타임라인 유지). 화자분리·타임스탬프 안전
+    noise-gate: ${SPEECHMATICS_NOISE_GATE:true}
+    noise-gate-threshold: ${SPEECHMATICS_NOISE_GATE_THRESHOLD:180}
 
   livekit:
     api-key: ${LIVEKIT_API_KEY:}

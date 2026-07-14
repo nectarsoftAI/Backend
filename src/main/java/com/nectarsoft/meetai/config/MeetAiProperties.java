@@ -94,6 +94,10 @@ public class MeetAiProperties {
         private String operatingPoint = "enhanced";
         // 화자 감지 민감도(0~1, 기본 0.5). 높일수록 서로 다른 화자를 더 잘 나눔(과분리 위험도 증가)
         private double speakerSensitivity = 0.6;
+        // 에너지 VAD 노이즈 게이트: 명백한 무음/노이즈 프레임을 0으로 치환(타임라인 보존) → 헛자막↓
+        private boolean noiseGate = true;
+        // 무음 판정 RMS 임계값(0~32767). 낮게 잡아 실제 음성은 안 건드림. 노이즈 플로어만 제거
+        private int noiseGateThreshold = 180;
     }
 
     @Data

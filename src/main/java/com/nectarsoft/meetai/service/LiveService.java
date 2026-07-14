@@ -138,6 +138,7 @@ public class LiveService {
             log.info("[Live] Speechmatics 스트리밍 세션 시작 — meetingId={}", k);
             return new SpeechmaticsLiveSession(cfg.getApiKey(), cfg.getUrl(), cfg.getLanguage(),
                     cfg.getMaxDelaySec(), cfg.getOperatingPoint(), cfg.getSpeakerSensitivity(),
+                    cfg.isNoiseGate(), cfg.getNoiseGateThreshold(),
                     seg -> broadcastLiveSegment(k, seg));
         });
     }
