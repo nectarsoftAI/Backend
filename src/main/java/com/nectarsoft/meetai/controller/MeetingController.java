@@ -1,8 +1,7 @@
 package com.nectarsoft.meetai.controller;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.core.exception.Exceptions;
+import com.nectarsoft.meetai.core.util.Keywords;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
 import com.nectarsoft.meetai.dto.SaveSummaryRequest;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
@@ -46,7 +45,6 @@ public class MeetingController {
     private final AudioFileRepository audioFileRepo;
     private final MeetingSummaryRepository meetingSummaryRepo;
     private final LlmService llmService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Operation(summary = "회의 목록 조회 (페이징)")
     @GetMapping
@@ -77,12 +75,8 @@ public class MeetingController {
                     .map(e -> Map.of("speakerLabel", e.getKey(), "speakerDisplay", e.getValue()))
                     .toList();
 
-            List<String> keywords = List.of();
             MeetingSummary summary = sumByMeeting.get(m.getMeetingId());
-            if (summary != null && summary.getKeywords() != null) {
-                try { keywords = objectMapper.readValue(summary.getKeywords(), new TypeReference<>() {}); }
-                catch (Exception ignored) {}
-            }
+            List<String> keywords = Keywords.parse(summary != null ? summary.getKeywords() : null);
 
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("meetingId", m.getMeetingId().toString());

@@ -1,5 +1,6 @@
 package com.nectarsoft.meetai.dto;
 
+import com.nectarsoft.meetai.core.util.Keywords;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.Transcript;
@@ -40,7 +41,7 @@ public class MeetingDetailResponse {
         String keyPoints;
         String decisions;
         String actionItems;
-        String keywords;
+        List<String> keywords;
         String processingStatus;
         OffsetDateTime processedAt;
     }
@@ -61,7 +62,7 @@ public class MeetingDetailResponse {
                 .keyPoints(summary.getKeyPoints())
                 .decisions(summary.getDecisions())
                 .actionItems(summary.getActionItems())
-                .keywords(summary.getKeywords())
+                .keywords(Keywords.parse(summary.getKeywords()))
                 .processingStatus(summary.getProcessingStatus().name())
                 .processedAt(summary.getProcessedAt())
                 .build();
