@@ -28,7 +28,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -170,7 +169,10 @@ public class MeetingController {
                 FINALIZE_WAIT_TIMEOUT_MS / 1000, meetingId);
     }
 
-    @Operation(summary = "LLM 요약 저장 (Python LLM 서버가 호출)")
+    @Operation(summary = "LLM 원문 응답 보관 (Python LLM 서버 콜백)",
+               description = "raw_response만 저장합니다. 파싱된 요약 컬럼(key_points 등)은 "
+                       + "LlmService가 단일 포맷으로 저장하므로 여기서 덮어쓰지 않습니다 — "
+                       + "두 주체가 서로 다른 형식으로 같은 컬럼을 쓰던 경합이 형식 오염의 원인이었음.")
     @PostMapping("/{meetingId}/summary")
     @ResponseStatus(HttpStatus.CREATED)
     public void saveSummary(@PathVariable UUID meetingId, @RequestBody SaveSummaryRequest req) {
@@ -178,16 +180,12 @@ public class MeetingController {
                 .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
 
         MeetingSummary summary = meetingSummaryRepo.findByMeetingMeetingId(meetingId)
-                .orElseGet(() -> MeetingSummary.builder().meeting(meeting).build());
+                .orElseGet(() -> MeetingSummary.builder()
+                        .meeting(meeting)
+                        .processingStatus(SttProcessingStatus.PROCESSING) // 파싱 컬럼은 LlmService가 채우며 COMPLETED로 전환
+                        .build());
 
-        summary.setLlmModel("gpt-4o");
-        summary.setProcessingStatus(SttProcessingStatus.COMPLETED);
-        summary.setKeyPoints(req.getKeyPoints());
-        summary.setDecisions(req.getDecisions());
-        summary.setActionItems(req.getActionItems());
-        summary.setKeywords(req.getKeywords());
         summary.setRawResponse(req.getRawResponse());
-        summary.setProcessedAt(OffsetDateTime.now());
         meetingSummaryRepo.save(summary);
     }
 
