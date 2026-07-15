@@ -113,8 +113,8 @@ public class MeetAiProperties {
         private String model = "nova-3";
         private String language = "ko";
         // 발화 종료(문장 경계) 판정 무음(ms). 작을수록 확정이 빨라지는 대신 문장이 잘게 쪼개짐.
-        // 10(공식 예제)은 한국어 숨 고르기에도 끊겨 문장 정확도가 떨어짐 → 500이 자연스러운 균형점
-        private int endpointingMs = 500;
+        // 300 = 반응속도 우선(DEEPGRAM_ENDPOINTING_MS로 조정). 과분리 시 500~700으로 상향
+        private int endpointingMs = 300;
         // partial(말하는 중 미리보기) — is_final:false 세그먼트 브로드캐스트. Speechmatics와 동일 규칙
         private boolean partials = false;
     }
