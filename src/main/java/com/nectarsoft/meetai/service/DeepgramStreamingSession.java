@@ -110,6 +110,13 @@ public class DeepgramStreamingSession {
         }
     }
 
+    /** 회의 중 롤링 선요약용 — 진행 중 턴을 flush하지 않고 확정된 세그먼트만 스냅샷 */
+    public List<Segment> getFinalsSnapshot() {
+        synchronized (finals) {
+            return new ArrayList<>(finals);
+        }
+    }
+
     /** 누적 중인 화자 턴을 확정 세그먼트로 방출 (turnLock 보유 상태에서 호출) */
     private void flushTurnLocked() {
         String text = turnText.toString().strip();

@@ -54,22 +54,40 @@ public class LlmService {
     }
 
     public TranscribeResponse.SummaryDto summarize(UUID meetingId, List<Transcript> transcripts) {
+        return runSummarize(meetingId, transcripts, false);
+    }
+
+    /**
+     * 강제 갱신 요약 — DB 캐시를 무시하고 항상 새로 요약해 덮어쓴다.
+     * 회의 중 3분 롤링 선(先)요약 / 종료 시 최종 완전본 생성에 사용 (내용이 계속 늘어나므로 재요약 필요).
+     */
+    @Async
+    public void refreshSummaryAsync(UUID meetingId, List<Transcript> transcripts) {
+        try {
+            runSummarize(meetingId, transcripts, true);
+        } catch (Exception e) {
+            log.error("[LLM] 롤링 선요약 실패 — meetingId={}: {}", meetingId, e.getMessage());
+        }
+    }
+
+    private TranscribeResponse.SummaryDto runSummarize(UUID meetingId, List<Transcript> transcripts, boolean force) {
         Object lock = summarizeLocks.computeIfAbsent(meetingId, k -> new Object());
         synchronized (lock) {
             try {
                 // 먼저 진입한 호출이 LLM을 실행하는 동안 대기했다가,
-                // 완료되면 아래 DB 캐시 체크에서 결과를 그대로 반환한다
-                return doSummarize(meetingId, transcripts);
+                // 완료되면 아래 DB 캐시 체크에서 결과를 그대로 반환한다 (force면 캐시 무시하고 재요약)
+                return doSummarize(meetingId, transcripts, force);
             } finally {
                 summarizeLocks.remove(meetingId, lock);
             }
         }
     }
 
-    private TranscribeResponse.SummaryDto doSummarize(UUID meetingId, List<Transcript> transcripts) {
-        // DB에 이미 완료된 요약이 있으면 LLM 호출 없이 반환
+    private TranscribeResponse.SummaryDto doSummarize(UUID meetingId, List<Transcript> transcripts, boolean force) {
+        // DB에 이미 완료된 요약이 있으면 LLM 호출 없이 반환 (force=true 롤링/최종 갱신은 건너뜀)
         Optional<MeetingSummary> existing = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
-        if (existing.isPresent() && existing.get().getProcessingStatus() == SttProcessingStatus.COMPLETED) {
+        if (!force && existing.isPresent()
+                && existing.get().getProcessingStatus() == SttProcessingStatus.COMPLETED) {
             log.info("[LLM] DB 캐시 반환 — meetingId={}", meetingId);
             return fromEntity(existing.get());
         }

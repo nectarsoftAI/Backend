@@ -498,6 +498,11 @@ public class SpeechmaticsLiveSession {
         return new ArrayList<>(finals);
     }
 
+    /** 회의 중 롤링 선요약용 — 확정된 세그먼트만 스냅샷 (finals는 확정본만 담음) */
+    public List<Segment> getFinalsSnapshot() {
+        return new ArrayList<>(finals);
+    }
+
     /** EndOfStream 전송 → EndOfTranscript 대기 → 정리. 남은 확정 자막까지 받고 닫는다. */
     public void close() {
         if (closed) return;
