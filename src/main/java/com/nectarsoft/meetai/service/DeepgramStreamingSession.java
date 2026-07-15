@@ -191,6 +191,14 @@ public class DeepgramStreamingSession {
                     turnEnd = w.path("end").asDouble(0);
                     turnConfidence = confidence;
 
+                    // 문장 끝 부호(smart_format)가 오면 그 지점에서 확정 — 연속 발화에서도 문장 단위 분리.
+                    // (침묵/speech_final만으로는 문장 사이 무음이 없으면 여러 문장이 한 덩어리로 뭉침)
+                    char last = token.charAt(token.length() - 1);
+                    if (last == '.' || last == '?' || last == '!' || last == '。' || last == '…') {
+                        flushTurnLocked();
+                        continue;
+                    }
+
                     if (turnEnd - turnStart >= MAX_TURN_SEC) {
                         flushTurnLocked(); // 쉼 없는 장광설도 주기적으로 자막 방출
                     }
