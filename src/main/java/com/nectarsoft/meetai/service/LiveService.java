@@ -60,6 +60,7 @@ public class LiveService {
     private final TranscriptRepository transcriptRepo;
     private final OnlineRoomManager roomManager;
     private final ObjectMapper objectMapper;
+    private final LlmService llmService;
 
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -348,6 +349,13 @@ public class LiveService {
             long speakers = segments.stream().map(DiarizedSegment::speaker).distinct().count();
             log.info("[Live] 최종 변환 완료 — meetingId={}, segments={}, 화자 {}명",
                     mid, transcripts.size(), speakers);
+
+            // 종료 즉시 LLM 요약을 백그라운드로 선(先) 시작 — 프론트 /summarize 요청 전에 미리 생성.
+            // 요청 시점엔 이미 완료(DB 캐시 반환)거나 진행 중(락 대기 후 반환)이라 체감 대기가 크게 준다.
+            if (!transcripts.isEmpty()) {
+                llmService.summarizeAsync(mid, transcripts);
+                log.info("[Live] 종료 직후 LLM 요약 백그라운드 시작 — meetingId={}", mid);
+            }
         } catch (Exception e) {
             log.error("[Live] 최종 변환 실패 — meetingId={}: {}", mid, e.getMessage());
         } finally {
