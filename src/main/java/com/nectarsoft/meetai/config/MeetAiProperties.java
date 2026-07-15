@@ -116,7 +116,7 @@ public class MeetAiProperties {
         // 300 = 반응속도 우선(DEEPGRAM_ENDPOINTING_MS로 조정). 과분리 시 500~700으로 상향
         private int endpointingMs = 300;
         // partial(말하는 중 미리보기) — is_final:false 세그먼트 브로드캐스트. Speechmatics와 동일 규칙
-        private boolean partials = false;
+        private boolean partials = true;
     }
 
     @Data

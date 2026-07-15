@@ -69,7 +69,7 @@ meetai:
     # 300 = 반응속도 우선. 문장이 과도하게 쪼개지면 env로 500~700으로 올려 튜닝
     endpointing-ms: ${DEEPGRAM_ENDPOINTING_MS:300}
     # 말하는 중 미리보기(is_final:false) — 프론트가 partial 교체 렌더링 지원 시 켤 것
-    partials: ${DEEPGRAM_PARTIALS:false}
+    partials: ${DEEPGRAM_PARTIALS:true}
 
   livekit:
     api-key: ${LIVEKIT_API_KEY:}
