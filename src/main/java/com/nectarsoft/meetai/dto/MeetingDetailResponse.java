@@ -41,7 +41,8 @@ public class MeetingDetailResponse {
         String keyPoints;
         String decisions;
         String actionItems;
-        List<String> keywords;
+        // 프론트 parseSummaryDto가 JSON.parse하는 계약 — 반드시 JSON 배열 "문자열" (배열 아님)
+        String keywords;
         String processingStatus;
         OffsetDateTime processedAt;
     }
@@ -62,7 +63,8 @@ public class MeetingDetailResponse {
                 .keyPoints(summary.getKeyPoints())
                 .decisions(summary.getDecisions())
                 .actionItems(summary.getActionItems())
-                .keywords(Keywords.parse(summary.getKeywords()))
+                // 오염된 값(이중 인코딩 등)도 parse→toJson 왕복으로 항상 깨끗한 배열 문자열로 정규화
+                .keywords(Keywords.toJson(Keywords.parse(summary.getKeywords())))
                 .processingStatus(summary.getProcessingStatus().name())
                 .processedAt(summary.getProcessedAt())
                 .build();

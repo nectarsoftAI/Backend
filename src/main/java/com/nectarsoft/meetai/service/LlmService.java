@@ -177,7 +177,7 @@ public class LlmService {
         entity.setKeyPoints(dto.getKeyPoints());
         entity.setDecisions(dto.getDecisions());
         entity.setActionItems(dto.getActionItems());
-        entity.setKeywords(Keywords.toJson(dto.getKeywords()));
+        entity.setKeywords(dto.getKeywords()); // toSummaryDto/fromEntity에서 이미 정규화된 배열 문자열
         entity.setProcessedAt(OffsetDateTime.now());
     }
 
@@ -186,7 +186,8 @@ public class LlmService {
                 .keyPoints(entity.getKeyPoints())
                 .decisions(entity.getDecisions())
                 .actionItems(entity.getActionItems())
-                .keywords(Keywords.parse(entity.getKeywords()))
+                // 오염된 값도 parse→toJson 왕복으로 깨끗한 배열 문자열로 정규화
+                .keywords(Keywords.toJson(Keywords.parse(entity.getKeywords())))
                 .processingStatus(entity.getProcessingStatus().name())
                 .processedAt(entity.getProcessedAt())
                 .build();
@@ -198,7 +199,8 @@ public class LlmService {
                     .keyPoints(objectMapper.writeValueAsString(body.get("summary")))
                     .decisions(objectMapper.writeValueAsString(body.get("decisions")))
                     .actionItems(objectMapper.writeValueAsString(body.get("action_items")))
-                    .keywords(Keywords.from(body.get("keywords")))
+                    // LLM 응답이 배열이든 문자열이든 항상 JSON 배열 문자열로 통일
+                    .keywords(Keywords.toJson(Keywords.from(body.get("keywords"))))
                     .processingStatus("COMPLETED")
                     .processedAt(null)
                     .build();
