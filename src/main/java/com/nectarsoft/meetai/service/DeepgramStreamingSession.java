@@ -209,28 +209,44 @@ public class DeepgramStreamingSession {
             }
         }
 
-        /** 말하는 중 미리보기 — 누적 없이 화자별로 묶어 isFinal=false로 방출 */
+        /**
+         * 말하는 중 미리보기 — partial 경계를 final(턴)과 일치시킨다.
+         * partial = "현재 턴의 확정 텍스트(turnText) + 진행 중 interim". 시작점도 turnStart로 맞춰,
+         * 문장부호/무음에서 final이 flush되면 같은 화자·같은 시작의 확정본이 partial을 그대로 대체한다.
+         * (예전엔 partial=Deepgram interim 구간, final=누적 턴이라 경계가 달라 화면이 꼬였음)
+         */
         private void emitInterimPreview(JsonNode words, double confidence) {
-            Integer speaker = null;
-            StringBuilder text = new StringBuilder();
-            double start = 0, end = 0;
+            Integer interimSpk = null;
+            StringBuilder interim = new StringBuilder();
+            double interimStart = -1, end = 0;
             for (JsonNode w : words) {
                 String token = w.path("punctuated_word").asText("");
                 if (token.isEmpty()) token = w.path("word").asText("");
                 if (token.isEmpty()) continue;
-
-                int sp = w.path("speaker").asInt(0);
-                if (speaker == null || sp != speaker) {
-                    if (speaker != null) previewCallback(speaker, text.toString(), start, end, confidence);
-                    speaker = sp;
-                    text.setLength(0);
-                    start = w.path("start").asDouble(0);
+                if (interimSpk == null) {
+                    interimSpk = w.path("speaker").asInt(0);
+                    interimStart = w.path("start").asDouble(0);
                 }
-                if (text.length() > 0) text.append(' ');
-                text.append(token);
+                if (interim.length() > 0) interim.append(' ');
+                interim.append(token);
                 end = w.path("end").asDouble(0);
             }
-            if (speaker != null) previewCallback(speaker, text.toString(), start, end, confidence);
+            if (interim.length() == 0) return;
+
+            synchronized (turnLock) {
+                boolean sameSpeaker = turnSpeaker != null && turnSpeaker.equals(interimSpk);
+                int spk = sameSpeaker ? turnSpeaker : (interimSpk != null ? interimSpk : 0);
+                double start;
+                String full;
+                if (sameSpeaker && turnText.length() > 0) {
+                    start = turnStart >= 0 ? turnStart : interimStart;   // 턴과 같은 시작점
+                    full = turnText + " " + interim;                     // 확정분 + 진행 중
+                } else {
+                    start = interimStart;                                // 새 화자/새 턴 미리보기
+                    full = interim.toString();
+                }
+                previewCallback(spk, full.strip(), start, end, confidence);
+            }
         }
 
         private void previewCallback(int speaker, String text, double start, double end, double confidence) {
