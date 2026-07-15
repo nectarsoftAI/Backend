@@ -2,6 +2,7 @@ package com.nectarsoft.meetai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.config.MeetAiProperties;
+import com.nectarsoft.meetai.core.util.Keywords;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingSummary;
@@ -176,7 +177,7 @@ public class LlmService {
         entity.setKeyPoints(dto.getKeyPoints());
         entity.setDecisions(dto.getDecisions());
         entity.setActionItems(dto.getActionItems());
-        entity.setKeywords(dto.getKeywords());
+        entity.setKeywords(Keywords.toJson(dto.getKeywords()));
         entity.setProcessedAt(OffsetDateTime.now());
     }
 
@@ -185,7 +186,7 @@ public class LlmService {
                 .keyPoints(entity.getKeyPoints())
                 .decisions(entity.getDecisions())
                 .actionItems(entity.getActionItems())
-                .keywords(entity.getKeywords())
+                .keywords(Keywords.parse(entity.getKeywords()))
                 .processingStatus(entity.getProcessingStatus().name())
                 .processedAt(entity.getProcessedAt())
                 .build();
@@ -197,7 +198,7 @@ public class LlmService {
                     .keyPoints(objectMapper.writeValueAsString(body.get("summary")))
                     .decisions(objectMapper.writeValueAsString(body.get("decisions")))
                     .actionItems(objectMapper.writeValueAsString(body.get("action_items")))
-                    .keywords(objectMapper.writeValueAsString(body.get("keywords")))
+                    .keywords(Keywords.from(body.get("keywords")))
                     .processingStatus("COMPLETED")
                     .processedAt(null)
                     .build();

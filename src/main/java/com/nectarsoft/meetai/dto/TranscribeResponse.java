@@ -35,7 +35,7 @@ public class TranscribeResponse {
         String keyPoints;
         String decisions;
         String actionItems;
-        String keywords;
+        List<String> keywords;
         String processingStatus;
         OffsetDateTime processedAt;
     }
