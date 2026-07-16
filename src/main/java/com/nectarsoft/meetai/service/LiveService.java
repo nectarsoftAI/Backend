@@ -13,6 +13,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedOutputStream;
@@ -24,6 +25,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.sql.Types;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -53,9 +55,6 @@ public class LiveService {
     private static final int ROLLING_INTERVAL_SEC = 6;
     private static final String TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions";
     private static final String DIARIZE_MODEL = "gpt-4o-transcribe-diarize";
-    // 회의 중 롤링 선(先)요약 주기(초) — 3분마다 현재까지 전사본을 요약해 캐시 → 종료 시 즉시 반환
-    private static final int PREWARM_INTERVAL_SEC = 180;
-    private static final int PREWARM_MIN_SEGMENTS = 3; // 너무 짧은 초반엔 선요약 생략
 
     private final MeetAiProperties props;
     private final MeetingRepository meetingRepo;
@@ -64,6 +63,7 @@ public class LiveService {
     private final OnlineRoomManager roomManager;
     private final ObjectMapper objectMapper;
     private final LlmService llmService;
+    private final JdbcTemplate jdbcTemplate;
 
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -77,8 +77,6 @@ public class LiveService {
     // 연결 실패한 회의는 dgFailed에 기록해 청크마다 재연결을 시도하지 않는다
     private final Map<String, DeepgramStreamingSession> dgSessions = new ConcurrentHashMap<>();
     private final java.util.Set<String> dgFailed = ConcurrentHashMap.newKeySet();
-    // 롤링 선요약: 마지막으로 선요약한 세그먼트 수 — 새 내용 없으면 재요약 생략(LLM 비용 절약)
-    private final Map<String, Integer> prewarmedCount = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService diarizeExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "live-diarize");
@@ -101,51 +99,6 @@ public class LiveService {
     void startRollingDiarize() {
         diarizeExecutor.scheduleWithFixedDelay(this::rollingPass,
                 ROLLING_INTERVAL_SEC, ROLLING_INTERVAL_SEC, TimeUnit.SECONDS);
-        // 회의 중 3분마다 롤링 선요약 (종료 시 요약 즉시 반환용)
-        diarizeExecutor.scheduleWithFixedDelay(this::prewarmSummaries,
-                PREWARM_INTERVAL_SEC, PREWARM_INTERVAL_SEC, TimeUnit.SECONDS);
-    }
-
-    /**
-     * 회의 중 롤링 선요약 — 활성 스트리밍 세션의 현재까지 확정 자막을 3분마다 요약해 DB 캐시.
-     * 종료 시 프론트가 요약을 요청하면 이 캐시가 즉시 반환된다(최종 완전본은 종료 시 한 번 더 갱신).
-     * refreshSummaryAsync는 @Async라 LLM 호출이 이 스케줄러 스레드를 막지 않는다.
-     */
-    private void prewarmSummaries() {
-        dgSessions.forEach((meetingId, dg) -> {
-            try {
-                prewarmFrom(meetingId, dg.getFinalsSnapshot().stream()
-                        .map(s -> transcriptOf(s.speakerLabel(), s.text(), s.startSec(), s.endSec()))
-                        .collect(Collectors.toList()));
-            } catch (Exception e) {
-                log.warn("[Live] Deepgram 선요약 스냅샷 실패 — meetingId={}: {}", meetingId, e.getMessage());
-            }
-        });
-        liveSessions.forEach((meetingId, live) -> {
-            try {
-                prewarmFrom(meetingId, live.getFinalsSnapshot().stream()
-                        .map(s -> transcriptOf(s.speakerLabel(), s.text(), s.startSec(), s.endSec()))
-                        .collect(Collectors.toList()));
-            } catch (Exception e) {
-                log.warn("[Live] Speechmatics 선요약 스냅샷 실패 — meetingId={}: {}", meetingId, e.getMessage());
-            }
-        });
-    }
-
-    private void prewarmFrom(String meetingId, List<Transcript> transcripts) {
-        if (transcripts.size() < PREWARM_MIN_SEGMENTS) return;
-        Integer prev = prewarmedCount.get(meetingId);
-        if (prev != null && prev == transcripts.size()) return; // 새 내용 없음 → 재요약 생략
-        prewarmedCount.put(meetingId, transcripts.size());
-        llmService.refreshSummaryAsync(UUID.fromString(meetingId), transcripts);
-        log.info("[Live] 3분 롤링 선요약 트리거 — meetingId={}, segments={}", meetingId, transcripts.size());
-    }
-
-    /** 스트리밍 세그먼트 → LLM 요약 payload용 임시 Transcript (DB 저장 안 함) */
-    private Transcript transcriptOf(String label, String text, double start, double end) {
-        return Transcript.builder()
-                .speakerLabel(label).speakerDisplay(label)
-                .startSec(start).endSec(end).content(text).build();
     }
 
     public Meeting createSession(String title, UUID profileId) {
@@ -394,18 +347,17 @@ public class LiveService {
                         .content(text)
                         .build());
             }
-            transcriptRepo.saveAll(transcripts);
+            batchInsertTranscripts(mid, sttResult.getSttId(), transcripts);
 
             long speakers = segments.stream().map(DiarizedSegment::speaker).distinct().count();
             log.info("[Live] 최종 변환 완료 — meetingId={}, segments={}, 화자 {}명",
                     mid, transcripts.size(), speakers);
 
-            // 종료 시 최종 완전본 요약을 강제 갱신(백그라운드) — 롤링 선요약(≤3분 stale)에 마지막 구간까지 반영.
-            // 프론트 /summarize는 그 사이 DB 캐시(직전 선요약)를 즉시 반환하므로 체감 대기가 거의 없다.
+            // 종료 즉시 최종 요약을 백그라운드로 생성(@Async) — 프론트 /summarize 폴링 전에 미리 시작해
+            // 대기 시간을 줄인다. (온라인 회의의 endMeeting → summarizeAsync와 동일한 패턴)
             if (!transcripts.isEmpty()) {
-                prewarmedCount.remove(mid);
                 llmService.refreshSummaryAsync(mid, transcripts);
-                log.info("[Live] 종료 직후 최종 요약 갱신 시작 — meetingId={}", mid);
+                log.info("[Live] 종료 직후 최종 요약 생성 시작 — meetingId={}", mid);
             }
         } catch (Exception e) {
             log.error("[Live] 최종 변환 실패 — meetingId={}: {}", mid, e.getMessage());
@@ -415,6 +367,29 @@ public class LiveService {
             meetingRepo.save(meeting);
             log.info("[Live] 백그라운드 처리 완료 — status=COMPLETED, meetingId={}", mid);
         }
+    }
+
+    /**
+     * transcript 벌크 저장 — JPA saveAll은 IDENTITY 키라 행마다 INSERT+생성키 조회로 왕복해
+     * 원격 DB(Supabase)에서 127행 ≈ 19초 병목이었다. JDBC 배치로 묶어 왕복을 수 회로 줄인다(≈1초).
+     * 저장 후 생성 ID는 쓰지 않으므로(수정은 이후 재조회로 처리) 키 조회를 생략해도 무방하다.
+     */
+    private void batchInsertTranscripts(UUID meetingId, Long sttId, List<Transcript> transcripts) {
+        if (transcripts.isEmpty()) return;
+        jdbcTemplate.batchUpdate(
+                "INSERT INTO transcripts "
+                        + "(meeting_id, stt_id, speaker_label, speaker_display, start_sec, end_sec, content) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                transcripts, 100,
+                (ps, t) -> {
+                    ps.setObject(1, meetingId);
+                    ps.setLong(2, sttId);
+                    ps.setString(3, t.getSpeakerLabel());
+                    ps.setString(4, t.getSpeakerDisplay());
+                    if (t.getStartSec() != null) ps.setDouble(5, t.getStartSec()); else ps.setNull(5, Types.DOUBLE);
+                    if (t.getEndSec() != null) ps.setDouble(6, t.getEndSec()); else ps.setNull(6, Types.DOUBLE);
+                    ps.setString(7, t.getContent());
+                });
     }
 
     /**
