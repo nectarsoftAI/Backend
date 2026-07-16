@@ -4,11 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nectarsoft.meetai.config.MeetAiProperties;
 import com.nectarsoft.meetai.core.util.Keywords;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
-import com.nectarsoft.meetai.model.Meeting;
 import com.nectarsoft.meetai.model.MeetingSummary;
 import com.nectarsoft.meetai.model.SttProcessingStatus;
 import com.nectarsoft.meetai.model.Transcript;
-import com.nectarsoft.meetai.repository.MeetingRepository;
 import com.nectarsoft.meetai.repository.MeetingSummaryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,9 +17,6 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import com.nectarsoft.meetai.core.retry.RetryHelper;
 
-import org.springframework.dao.DataIntegrityViolationException;
-
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,7 +32,6 @@ public class LlmService {
     private final RestTemplate restTemplate;
     private final MeetAiProperties props;
     private final MeetingSummaryRepository meetingSummaryRepo;
-    private final MeetingRepository meetingRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // meetingId별 in-flight 가드 — 같은 회의에 대한 동시 요약 요청을 1회 LLM 호출로 병합.
@@ -130,55 +124,17 @@ public class LlmService {
                 return null;
             }
 
+            // 저장은 Python(/api/summary → Supabase upsert + DB function)이 전담한다.
+            // Java가 같은 컬럼(key_points 등)을 문자열로 다시 쓰면 jsonb와 형식이 충돌해
+            // 이중 인코딩(봉투 겹침)이 발생하므로 Java는 요약 컬럼을 저장하지 않는다.
             TranscribeResponse.SummaryDto dto = toSummaryDto(response.getBody());
-            if (dto != null) {
-                saveToDb(meetingId, dto, existing);
-                log.info("[LLM] 요약 완료 및 DB 저장 — meetingId={}", meetingId);
-            }
+            log.info("[LLM] 요약 완료 — meetingId={} (DB 저장은 Python 전담)", meetingId);
             return dto;
 
         } catch (Exception e) {
             log.error("[LLM] 요약 중 오류 — meetingId={}: {}", meetingId, e.getMessage());
             return null;
         }
-    }
-
-    private void saveToDb(UUID meetingId, TranscribeResponse.SummaryDto dto,
-                          Optional<MeetingSummary> existing) {
-        try {
-            Meeting meeting = meetingRepo.findById(meetingId).orElse(null);
-            if (meeting == null) return;
-
-            Optional<MeetingSummary> latest = meetingSummaryRepo.findByMeetingMeetingId(meetingId);
-            MeetingSummary entity = latest.orElseGet(() ->
-                    existing.orElseGet(() -> MeetingSummary.builder().meeting(meeting).build()));
-
-            applyFields(entity, dto);
-            meetingSummaryRepo.save(entity);
-        } catch (DataIntegrityViolationException e) {
-            // Python LLM 서버 콜백(POST /summary)이 동시에 INSERT한 경우 — 재조회 후 UPDATE
-            log.warn("[LLM] 중복 INSERT 감지, UPDATE 재시도 — meetingId={}", meetingId);
-            try {
-                MeetingSummary entity = meetingSummaryRepo.findByMeetingMeetingId(meetingId)
-                        .orElseThrow(() -> new IllegalStateException("재조회 실패"));
-                applyFields(entity, dto);
-                meetingSummaryRepo.save(entity);
-            } catch (Exception e2) {
-                log.error("[LLM] UPDATE 재시도 실패 — meetingId={}: {}", meetingId, e2.getMessage());
-            }
-        } catch (Exception e) {
-            log.error("[LLM] DB 저장 실패 — meetingId={}: {}", meetingId, e.getMessage());
-        }
-    }
-
-    private void applyFields(MeetingSummary entity, TranscribeResponse.SummaryDto dto) {
-        entity.setLlmModel("gpt-4o");
-        entity.setProcessingStatus(SttProcessingStatus.COMPLETED);
-        entity.setKeyPoints(dto.getKeyPoints());
-        entity.setDecisions(dto.getDecisions());
-        entity.setActionItems(dto.getActionItems());
-        entity.setKeywords(dto.getKeywords()); // toSummaryDto/fromEntity에서 이미 정규화된 배열 문자열
-        entity.setProcessedAt(OffsetDateTime.now());
     }
 
     private TranscribeResponse.SummaryDto fromEntity(MeetingSummary entity) {
