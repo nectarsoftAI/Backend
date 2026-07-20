@@ -3,6 +3,7 @@ package com.nectarsoft.meetai.controller;
 import com.nectarsoft.meetai.core.exception.Exceptions;
 import com.nectarsoft.meetai.core.util.Keywords;
 import com.nectarsoft.meetai.dto.MeetingDetailResponse;
+import com.nectarsoft.meetai.dto.RenameSpeakerRequest;
 import com.nectarsoft.meetai.dto.SaveSummaryRequest;
 import com.nectarsoft.meetai.dto.TranscribeResponse;
 import com.nectarsoft.meetai.dto.UpdateTranscriptRequest;
@@ -209,6 +210,23 @@ public class MeetingController {
             if (req.getSpeakerDisplay() != null) t.setSpeakerDisplay(req.getSpeakerDisplay());
         }
         transcriptRepo.saveAll(byId.values());
+    }
+
+    @Operation(summary = "화자 이름 일괄 변경",
+               description = "speakerLabel(예: SPEAKER_A)에 해당하는 모든 발언의 표시 이름(speakerDisplay)을 "
+                       + "한 번에 변경합니다. 발언을 일일이 수정할 필요 없이 화자 단위로 이름을 바꿀 때 사용합니다.")
+    @PutMapping("/{meetingId}/speakers")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void renameSpeakers(@PathVariable UUID meetingId,
+                               @RequestBody List<RenameSpeakerRequest> renames) {
+        meetingRepo.findById(meetingId)
+                .orElseThrow(() -> new Exceptions.MeetingNotFoundError(meetingId.toString()));
+
+        for (RenameSpeakerRequest r : renames) {
+            if (r.getSpeakerLabel() == null || r.getSpeakerDisplay() == null) continue;
+            transcriptRepo.renameSpeaker(meetingId, r.getSpeakerLabel(), r.getSpeakerDisplay());
+        }
     }
 
     @Operation(summary = "회의 삭제")
