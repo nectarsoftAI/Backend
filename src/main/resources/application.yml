@@ -15,8 +15,9 @@ meetai:
     supported-formats: wav,mp3,m4a,ogg,flac,webm
 
   stt:
-    # openai_whisper | gpt4o | assemblyai
-    # 오프라인 회의는 화자 분리(diarization)가 필요하므로 assemblyai 사용 (Whisper는 화자 분리 미지원)
+    # openai_whisper | gpt4o | assemblyai | deepgram
+    # 화자 분리 지원: assemblyai, deepgram (openai_whisper/gpt4o는 전 세그먼트 SPEAKER_00)
+    # deepgram = 실시간 녹음과 같은 nova-3·같은 API 키라 화자 라벨 체계가 일치한다
     engine: ${STT_ENGINE:assemblyai}
     confidence-threshold: 0.8
     max-retries: 3
@@ -34,6 +35,8 @@ meetai:
     # 실시간(말하는 중) 자막 — OpenAI Realtime API
     realtime-model: ${OPENAI_REALTIME_MODEL:gpt-4o-transcribe}
     realtime-enabled: ${OPENAI_REALTIME_ENABLED:true}
+    # 온라인 회의 지연 계측 로그([STT계측-온라인]) — 시끄러우면 false
+    latency-log: ${OPENAI_LATENCY_LOG:true}
 
   assemblyai:
     api-key: ${ASSEMBLYAI_API_KEY:}
