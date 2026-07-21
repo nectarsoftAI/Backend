@@ -88,10 +88,30 @@ public class AssemblyAiEngine implements SttEngine {
             payload.put("language_code", cfg.getLanguageCode());
             if (speakerLabels) {
                 payload.put("speaker_labels", true);
-                // 화자 수를 모르면(0 이하) 힌트 없이 자동 감지에 맡김
-                if (cfg.getSpeakersExpected() > 0) {
-                    payload.put("speakers_expected", cfg.getSpeakersExpected());
+                // 화자 분리 지원 모델(universal-2 / universal-3-5-pro)을 명시.
+                // 생략하면 계정 기본 모델이 쓰이는데, 그 모델이 speaker_labels를
+                // 지원하지 않으면 요청은 200으로 성공하고 utterances만 비어서 온다
+                if (cfg.getSpeechModel() != null && !cfg.getSpeechModel().isBlank()) {
+                    payload.put("speech_model", cfg.getSpeechModel());
                 }
+                if (cfg.getSpeakersExpected() > 0) {
+                    // 정확한 화자 수를 아는 경우 — 틀리면 정확도가 오히려 떨어진다
+                    payload.put("speakers_expected", cfg.getSpeakersExpected());
+                } else if (cfg.getMinSpeakers() > 0 || cfg.getMaxSpeakers() > 0) {
+                    // 범위 힌트. min은 하한을 강제하므로 전부 한 화자로 뭉치는 것을 막는다.
+                    // 주의: 2분 미만 오디오에서는 이 옵션이 적용되지 않는 이슈가 보고돼 있다
+                    Map<String, Object> speakerOptions = new java.util.LinkedHashMap<>();
+                    if (cfg.getMinSpeakers() > 0) {
+                        speakerOptions.put("min_speakers_expected", cfg.getMinSpeakers());
+                    }
+                    if (cfg.getMaxSpeakers() > 0) {
+                        speakerOptions.put("max_speakers_expected", cfg.getMaxSpeakers());
+                    }
+                    payload.put("speaker_options", speakerOptions);
+                }
+                log.info("[AssemblyAI] 화자 분리 요청 — speech_model={}, speakers_expected={}, min={}, max={}",
+                        cfg.getSpeechModel(), cfg.getSpeakersExpected(),
+                        cfg.getMinSpeakers(), cfg.getMaxSpeakers());
             }
 
             RequestBody body = RequestBody.create(

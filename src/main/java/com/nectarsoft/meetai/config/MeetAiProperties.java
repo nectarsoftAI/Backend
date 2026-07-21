@@ -78,7 +78,15 @@ public class MeetAiProperties {
     public static class AssemblyAi {
         private String apiKey = "";
         private String languageCode = "ko";
+        // 정확한 화자 수를 알 때만 사용. 틀리면 오히려 정확도가 떨어진다(0 = 미지정)
         private int speakersExpected = 2;
+        // 화자 분리 지원 모델을 명시한다. 미지정 시 계정 기본 모델이 선택되는데
+        // 그 모델이 speaker_labels를 지원하지 않으면 utterances가 비어서 온다
+        private String speechModel = "universal-2";
+        // speakers_expected를 모를 때 범위로 힌트. min은 하한을 강제하므로
+        // "화자가 1명으로 뭉쳐 나오는" 증상에 직접 듣는다 (0 = 미지정)
+        private int minSpeakers = 0;
+        private int maxSpeakers = 0;
     }
 
     @Data
