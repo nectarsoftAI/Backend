@@ -33,7 +33,16 @@ import java.util.function.Consumer;
 public class DeepgramStreamingSession {
 
     public record Segment(String speakerLabel, String text, double startSec, double endSec,
-                          double confidence, boolean isFinal) {}
+                          double confidence, boolean isFinal, Timing timing) {}
+
+    /**
+     * 지연 계측용 타이밍(ms) — 자막 내용과 무관한 관측 데이터.
+     * - deepgramGapMs: 마지막 오디오 전송 → 이 결과 수신 (Deepgram 왕복, 내부 추론 포함)
+     * - turnHoldMs:    턴의 마지막 단어 도착 → 확정 방출 (문장부호/무음 대기 = 턴 누적 설계의 비용)
+     * - turnSpanMs:    턴의 첫 단어 도착 → 확정 방출 (턴 전체 누적 시간)
+     * - emitNanos:     방출 시각(nanoTime) — 수신 측이 이후 구간을 이어서 재기 위한 기준점
+     */
+    public record Timing(long deepgramGapMs, long turnHoldMs, long turnSpanMs, long emitNanos) {}
 
     private static final String WS_URL = "wss://api.deepgram.com/v1/listen";
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -53,6 +62,14 @@ public class DeepgramStreamingSession {
     private double turnStart = -1;
     private double turnEnd = 0;
     private double turnConfidence = 1.0;
+
+    // ── 지연 계측 상태 ────────────────────────────────────────────────
+    // 전송 시각은 sendAudio(WS 스레드)와 결과 수신(리스너 스레드)이 나눠 보므로 volatile,
+    // 턴 타이밍은 turnLock 보호 구간에서만 읽고 쓴다
+    private volatile long lastSendNanos = 0;   // 마지막 sendAudio 호출 시각
+    private volatile long lastResultGapMs = 0; // 직전 Results의 Deepgram 왕복(ms)
+    private long turnFirstWordNanos = 0;       // 현재 턴 첫 단어 도착 시각
+    private long turnLastWordNanos = 0;        // 현재 턴 마지막 단어 도착 시각
 
     public DeepgramStreamingSession(String apiKey, String model, String language, int sampleRate,
                                     int endpointingMs, boolean partials,
@@ -76,6 +93,7 @@ public class DeepgramStreamingSession {
     public void sendAudio(byte[] pcm) {
         if (closed) return;
         try {
+            lastSendNanos = System.nanoTime();
             webSocket.sendBinary(ByteBuffer.wrap(pcm), true);
         } catch (Exception e) {
             log.warn("[Deepgram] 오디오 전송 실패: {}", e.getMessage());
@@ -121,8 +139,14 @@ public class DeepgramStreamingSession {
     private void flushTurnLocked() {
         String text = turnText.toString().strip();
         if (turnSpeaker != null && !text.isEmpty()) {
+            long now = System.nanoTime();
+            Timing timing = new Timing(
+                    lastResultGapMs,
+                    turnLastWordNanos > 0 ? (now - turnLastWordNanos) / 1_000_000 : 0,
+                    turnFirstWordNanos > 0 ? (now - turnFirstWordNanos) / 1_000_000 : 0,
+                    now);
             Segment seg = new Segment(speakerLabel(turnSpeaker), text,
-                    turnStart, turnEnd, turnConfidence, true);
+                    turnStart, turnEnd, turnConfidence, true, timing);
             finals.add(seg);
             try {
                 onSegment.accept(seg);
@@ -133,6 +157,8 @@ public class DeepgramStreamingSession {
         turnSpeaker = null;
         turnText.setLength(0);
         turnStart = -1;
+        turnFirstWordNanos = 0;
+        turnLastWordNanos = 0;
     }
 
     private class Listener implements WebSocket.Listener {
@@ -157,6 +183,10 @@ public class DeepgramStreamingSession {
                         JsonNode alt = node.path("channel").path("alternatives").path(0);
                         JsonNode words = alt.path("words");
                         if (!words.isArray() || words.isEmpty()) return;
+                        // t2→t3: 마지막 오디오 전송 이후 경과 = Deepgram 왕복 근사치.
+                        // 오디오 청크와 결과가 1:1이 아니므로 정확한 왕복이 아니라 상한에 가깝다
+                        long sent = lastSendNanos;
+                        if (sent > 0) lastResultGapMs = (System.nanoTime() - sent) / 1_000_000;
                         double conf = alt.path("confidence").asDouble(1.0);
                         if (node.path("is_final").asBoolean(false)) {
                             appendFinalWords(words, conf, node.path("speech_final").asBoolean(false));
@@ -180,6 +210,7 @@ public class DeepgramStreamingSession {
          */
         private void appendFinalWords(JsonNode words, double confidence, boolean speechFinal) {
             synchronized (turnLock) {
+                long nowNanos = System.nanoTime(); // 이 배치의 단어 도착 시각(턴 대기 계측용)
                 for (JsonNode w : words) {
                     String token = w.path("punctuated_word").asText("");
                     if (token.isEmpty()) token = w.path("word").asText("");
@@ -192,11 +223,13 @@ public class DeepgramStreamingSession {
                     if (turnSpeaker == null) {
                         turnSpeaker = sp;
                         turnStart = w.path("start").asDouble(0);
+                        turnFirstWordNanos = nowNanos;
                     }
                     if (turnText.length() > 0) turnText.append(' ');
                     turnText.append(token);
                     turnEnd = w.path("end").asDouble(0);
                     turnConfidence = confidence;
+                    turnLastWordNanos = nowNanos;
 
                     // 문장 끝 부호(smart_format)가 오면 그 지점에서 확정 — 연속 발화에서도 문장 단위 분리.
                     // (침묵/speech_final만으로는 문장 사이 무음이 없으면 여러 문장이 한 덩어리로 뭉침)
@@ -260,7 +293,8 @@ public class DeepgramStreamingSession {
             String t = text.strip();
             if (t.isEmpty()) return;
             try {
-                onSegment.accept(new Segment(speakerLabel(speaker), t, start, end, confidence, false));
+                Timing timing = new Timing(lastResultGapMs, 0, 0, System.nanoTime());
+                onSegment.accept(new Segment(speakerLabel(speaker), t, start, end, confidence, false, timing));
             } catch (Exception e) {
                 log.debug("[Deepgram] 세그먼트 콜백 오류: {}", e.getMessage());
             }
