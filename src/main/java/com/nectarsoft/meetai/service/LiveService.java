@@ -116,6 +116,7 @@ public class LiveService {
 
     /** WS로 수신한 오디오 청크 누적 (webm은 그대로, raw PCM은 WAV 래핑해 사용) */
     public void appendAudio(String meetingId, byte[] data) {
+        long t1 = System.nanoTime(); // 오디오 청크 수신 시각(계측 기준점)
         try {
             Recording r = recordings.computeIfAbsent(meetingId, k -> openRecording(k, data));
             synchronized (r) {
@@ -132,7 +133,10 @@ public class LiveService {
         if (deepgramActive() && pcm) {
             if (!dgFailed.contains(meetingId)) {
                 DeepgramStreamingSession dg = dgSessions.computeIfAbsent(meetingId, this::openDeepgramSession);
-                if (dg != null) dg.sendAudio(data);
+                if (dg != null) {
+                    dg.sendAudio(data);
+                    logIngestLatency(meetingId, t1);
+                }
             }
         } else if (speechmaticsActive()) {
             try {
@@ -170,6 +174,7 @@ public class LiveService {
 
     /** Deepgram 자막을 프론트(LiveSTTService.ts) segment 스펙으로 브로드캐스트 */
     private void broadcastDeepgramSegment(String meetingId, DeepgramStreamingSession.Segment seg) {
+        long t5 = System.nanoTime(); // 브로드캐스트 진입(콜백 도착) 시각
         try {
             roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
                     "type", "segment",
@@ -179,11 +184,59 @@ public class LiveService {
                     "text", seg.text(),
                     "confidence", seg.confidence(),
                     "is_final", seg.isFinal())));   // false=말하는 중 미리보기(교체), true=확정
-            if (seg.isFinal()) {
-                log.info("[Live] 화자 자막(Deepgram) — [{}] \"{}\"", seg.speakerLabel(), seg.text());
-            }
+            logSegmentLatency(meetingId, seg, t5);
         } catch (Exception e) {
             log.debug("[Live] Deepgram 자막 브로드캐스트 실패: {}", e.getMessage());
+        }
+    }
+
+    // ── STT 지연 계측 ────────────────────────────────────────────────
+    // 구간: t1 청크 수신 → t2 Deepgram 전송 → t3 결과 수신 → t4 턴 확정 → t5 브로드캐스트.
+    // t2→t3 안에는 Deepgram 내부 추론이 포함되며 우리가 분리할 수 없다(블랙박스).
+    // 총 지연은 벽시계가 아니라 "수신한 오디오 길이 − 세그먼트 종료 지점"으로 구한다.
+    // 샘플 수는 절대 기준이라 프론트/서버 시계 오차와 무관하다.
+    private final Map<String, java.util.concurrent.atomic.AtomicLong> ingestCounters = new ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.atomic.AtomicLong> partialCounters = new ConcurrentHashMap<>();
+
+    /** t1→t2: 청크 수신 → Deepgram 전송 완료. 250ms마다 오므로 40개(약 10초)에 한 번만 남긴다 */
+    private void logIngestLatency(String meetingId, long t1) {
+        if (!props.getDeepgram().isLatencyLog()) return;
+        long n = ingestCounters.computeIfAbsent(meetingId, k -> new java.util.concurrent.atomic.AtomicLong())
+                .incrementAndGet();
+        if (n % 40 != 0) return;
+        log.info("[STT계측] t1→t2 청크 수신·전송 {}ms (누적 {}청크)",
+                String.format("%.2f", (System.nanoTime() - t1) / 1_000_000.0), n);
+    }
+
+    /** t2→t5 구간별 + 오디오 시계 기준 총 지연. final은 전부, partial은 10개당 1개만 남긴다 */
+    private void logSegmentLatency(String meetingId, DeepgramStreamingSession.Segment seg, long t5) {
+        if (!props.getDeepgram().isLatencyLog() || seg.timing() == null) return;
+        if (!seg.isFinal()) {
+            long n = partialCounters.computeIfAbsent(meetingId, k -> new java.util.concurrent.atomic.AtomicLong())
+                    .incrementAndGet();
+            if (n % 10 != 0) return;
+        }
+
+        DeepgramStreamingSession.Timing tm = seg.timing();
+        long callbackMs = (t5 - tm.emitNanos()) / 1_000_000;      // t4→t5
+        long sendMs = (System.nanoTime() - t5) / 1_000_000;       // 직렬화 + WS 전송
+
+        // 총 지연 = 지금까지 받은 오디오 길이 − 이 세그먼트의 마지막 단어 지점
+        String total = "n/a";
+        Recording r = recordings.get(meetingId);
+        if (r != null && seg.endSec() > 0) {
+            double audioSec = r.bytes / (double) (SAMPLE_RATE * 2); // 16kHz × 16bit mono
+            long ms = Math.round((audioSec - seg.endSec()) * 1000);
+            if (ms >= 0) total = ms + "ms";
+        }
+
+        if (seg.isFinal()) {
+            log.info("[STT계측] final   [{}] t2→t3 {}ms | t3→t4 턴대기 {}ms (턴전체 {}ms) | t4→t5 {}ms | 전송 {}ms | 총지연 {} | \"{}\"",
+                    seg.speakerLabel(), tm.deepgramGapMs(), tm.turnHoldMs(), tm.turnSpanMs(),
+                    callbackMs, sendMs, total, seg.text());
+        } else {
+            log.info("[STT계측] partial [{}] t2→t3 {}ms | t4→t5 {}ms | 전송 {}ms | 총지연 {}",
+                    seg.speakerLabel(), tm.deepgramGapMs(), callbackMs, sendMs, total);
         }
     }
 
@@ -232,6 +285,8 @@ public class LiveService {
         SpeechmaticsLiveSession live = liveSessions.remove(meetingId);
         DeepgramStreamingSession dg = dgSessions.remove(meetingId);
         dgFailed.remove(meetingId);
+        ingestCounters.remove(meetingId);   // 계측 카운터도 회의와 함께 정리
+        partialCounters.remove(meetingId);
         if (recording != null || live != null || dg != null) {
             // A안: 화면은 즉시 종료(session_ended + WS close), 최종 화자 분리는 백그라운드로.
             // 프론트는 GET /meetings/{id}의 status가 PROCESSING→COMPLETED 될 때 완성 회의록을 폴링한다.

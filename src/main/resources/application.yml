@@ -70,6 +70,8 @@ meetai:
     endpointing-ms: ${DEEPGRAM_ENDPOINTING_MS:300}
     # 말하는 중 미리보기(is_final:false) — 프론트가 partial 교체 렌더링 지원 시 켤 것
     partials: ${DEEPGRAM_PARTIALS:true}
+    # 지연 계측 로그([STT계측]) — 구간별 ms + 오디오 시계 기준 총 지연. 시끄러우면 false
+    latency-log: ${DEEPGRAM_LATENCY_LOG:true}
 
   livekit:
     api-key: ${LIVEKIT_API_KEY:}

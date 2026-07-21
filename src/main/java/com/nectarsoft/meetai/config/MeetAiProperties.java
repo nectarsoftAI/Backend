@@ -117,6 +117,8 @@ public class MeetAiProperties {
         private int endpointingMs = 300;
         // partial(말하는 중 미리보기) — is_final:false 세그먼트 브로드캐스트. Speechmatics와 동일 규칙
         private boolean partials = true;
+        // 지연 계측 로그([STT계측] 태그) — t1~t5 구간별 ms 출력. 운영에서 시끄러우면 false
+        private boolean latencyLog = true;
     }
 
     @Data
