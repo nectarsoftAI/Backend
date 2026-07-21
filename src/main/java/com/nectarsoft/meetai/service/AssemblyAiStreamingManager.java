@@ -84,6 +84,7 @@ public class AssemblyAiStreamingManager {
                     props.getOpenai().getRealtimeModel(),
                     props.getOpenai().getWhisperLanguage(),
                     sessionOffsetMs,
+                    props.getOpenai().isLatencyLog(),
                     t -> onFinal(meetingId, profileId, resolvedDisplay, t),
                     text -> onPartial(meetingId, profileId, resolvedDisplay, text)
             );
@@ -122,6 +123,7 @@ public class AssemblyAiStreamingManager {
 
     private void onFinal(String meetingId, String profileId, String display,
                          WhisperStreamingSession.Transcript t) {
+        long t5 = System.nanoTime(); // 확정 자막 수신 — DB 저장/브로드캐스트 구간 계측 기준점
         try {
             Meeting meeting = meetingRepo.findById(UUID.fromString(meetingId)).orElse(null);
             if (meeting == null) return;
@@ -142,7 +144,9 @@ public class AssemblyAiStreamingManager {
                     .endSec(t.endSec())
                     .content(t.text())
                     .build());
+            long dbMs = (System.nanoTime() - t5) / 1_000_000;
 
+            long bcStart = System.nanoTime();
             roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
                     "type", "transcript",
                     "profileId", profileId,
@@ -153,6 +157,11 @@ public class AssemblyAiStreamingManager {
                     "isFinal", true
             )));
             log.info("[StreamingMgr] FinalTranscript — [{}] \"{}\"", display, t.text());
+            if (props.getOpenai().isLatencyLog()) {
+                // 자막은 DB 저장이 끝나야 나간다 — 저장이 느리면 그만큼 화면 표시가 늦어진다
+                log.info("[STT계측-온라인] t5 [{}] DB저장 {}ms | 브로드캐스트 {}ms",
+                        display, dbMs, (System.nanoTime() - bcStart) / 1_000_000);
+            }
         } catch (Exception e) {
             log.error("[StreamingMgr] FinalTranscript 처리 실패: {}", e.getMessage());
         }

@@ -70,6 +70,8 @@ public class MeetAiProperties {
         private String realtimeModel = "gpt-4o-transcribe";
         // 실시간(말하는 중) 자막 — 문제 시 OPENAI_REALTIME_ENABLED=false로 Whisper 배치 폴백
         private boolean realtimeEnabled = true;
+        // 지연 계측 로그([STT계측-온라인]) — ffmpeg/전사/DB저장 구간 ms. 시끄러우면 false
+        private boolean latencyLog = true;
     }
 
     @Data

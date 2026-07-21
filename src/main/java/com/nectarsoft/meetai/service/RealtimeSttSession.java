@@ -59,8 +59,22 @@ public class RealtimeSttSession implements SttStreamSession {
     private final Map<String, long[]> speechTimesByItem = new ConcurrentHashMap<>();
     private final Map<String, StringBuilder> partials = new ConcurrentHashMap<>();
 
+    // ── 지연 계측 ────────────────────────────────────────────────────
+    // 구간: t1 청크 수신 → (ffmpeg 디코딩) → t2 OpenAI 전송 → t3 이벤트 수신.
+    // t1→t2는 ffmpeg가 별도 프로세스·별도 스레드라 1:1 대응이 아니므로
+    // "마지막 입력 이후 경과"로 근사한다.
+    // 총 지연은 OpenAI가 주는 audio_end_ms(오디오 시계)와 우리가 보낸 오디오 길이의 차이라
+    // 벽시계 오차와 무관하다.
+    private final boolean latencyLog;
+    private volatile long lastAudioInNanos = 0;                    // sendAudio 진입 시각
+    private volatile long ffmpegLagMs = 0;                         // t1→t2 근사
+    private final java.util.concurrent.atomic.AtomicLong sentAudioBytes =
+            new java.util.concurrent.atomic.AtomicLong();          // OpenAI로 보낸 24kHz PCM 누적
+    private final Map<String, Long> stopWallByItem = new ConcurrentHashMap<>();   // speech_stopped 도착 시각
+    private final Map<String, Long> firstDeltaByItem = new ConcurrentHashMap<>(); // 첫 partial 도착 시각
+
     public RealtimeSttSession(String apiKey, String model, String language,
-                              long sessionOffsetMs,
+                              long sessionOffsetMs, boolean latencyLog,
                               Consumer<WhisperStreamingSession.Transcript> onFinal,
                               Consumer<String> onPartial) {
         this.apiKey = apiKey;
@@ -68,6 +82,7 @@ public class RealtimeSttSession implements SttStreamSession {
         this.language = language;
         this.meetingStartMs = System.currentTimeMillis() - sessionOffsetMs;
         this.sessionStartMs = System.currentTimeMillis();
+        this.latencyLog = latencyLog;
         this.onFinal = onFinal;
         this.onPartial = onPartial;
 
@@ -106,6 +121,7 @@ public class RealtimeSttSession implements SttStreamSession {
     @Override
     public synchronized void sendAudio(byte[] data) {
         if (closed) return;
+        lastAudioInNanos = System.nanoTime(); // t1 — ffmpeg 통과 지연 계측 기준점
         try {
             if (ffmpeg == null) startFfmpeg(isContainer(data));
             ffmpegIn.write(data);
@@ -165,20 +181,35 @@ public class RealtimeSttSession implements SttStreamSession {
                 if (closed) break;
                 acc.write(buf, 0, n);
                 if (acc.size() >= BATCH_BYTES) {
-                    sendJson(Map.of(
-                            "type", "input_audio_buffer.append",
-                            "audio", Base64.getEncoder().encodeToString(acc.toByteArray())));
+                    appendToOpenAi(acc.toByteArray());
                     acc.reset();
                 }
             }
             if (acc.size() > 0 && !closed) {
-                sendJson(Map.of(
-                        "type", "input_audio_buffer.append",
-                        "audio", Base64.getEncoder().encodeToString(acc.toByteArray())));
+                appendToOpenAi(acc.toByteArray());
             }
         } catch (Exception e) {
             if (!closed) log.error("[Realtime] PCM 펌프 종료: {}", e.getMessage());
         }
+    }
+
+    /**
+     * t2 — 디코딩된 24kHz PCM을 OpenAI 버퍼에 append.
+     * 보낸 누적 바이트가 곧 오디오 시계(48바이트 = 1ms)이며,
+     * OpenAI가 주는 audio_end_ms와 같은 원점을 공유하므로 총 지연 계산에 쓴다.
+     */
+    private void appendToOpenAi(byte[] pcm24k) {
+        sentAudioBytes.addAndGet(pcm24k.length);
+        long in = lastAudioInNanos;
+        if (in > 0) ffmpegLagMs = (System.nanoTime() - in) / 1_000_000;
+        sendJson(Map.of(
+                "type", "input_audio_buffer.append",
+                "audio", Base64.getEncoder().encodeToString(pcm24k)));
+    }
+
+    /** OpenAI 버퍼에 보낸 오디오 길이(ms) — 24kHz × 16bit mono = 48바이트/ms */
+    private long sentAudioMs() {
+        return sentAudioBytes.get() / 48;
     }
 
     // ── Realtime WS 송신 (단일화 + 끊김 시 재접속) ──────────────────
@@ -239,6 +270,29 @@ public class RealtimeSttSession implements SttStreamSession {
         }
     }
 
+    /**
+     * 확정 자막 지연 로그.
+     * - 전사: OpenAI가 무음을 감지한 시점(speech_stopped) → 전사 완료. OpenAI 처리 시간
+     * - 총지연: 발화 종료(audio_end_ms) → 지금까지 보낸 오디오 지점. 오디오 시계 기준이라
+     *          벽시계 오차와 무관하다. 재접속으로 버퍼 원점이 바뀌면 음수/과대값이 나올 수
+     *          있어 비정상 범위는 n/a로 남긴다
+     */
+    private void logFinalLatency(String itemId, long[] speech, String text) {
+        Long stopNanos = stopWallByItem.remove(itemId);
+        firstDeltaByItem.remove(itemId);
+        if (!latencyLog) return;
+
+        String transcribe = stopNanos != null
+                ? (System.nanoTime() - stopNanos) / 1_000_000 + "ms" : "n/a";
+        String total = "n/a";
+        if (speech != null && speech[1] > 0) {
+            long ms = sentAudioMs() - speech[1];
+            if (ms >= 0 && ms < 60_000) total = ms + "ms";
+        }
+        log.info("[STT계측-온라인] final — 전사 {} (무음감지 후) | 총지연 {} | ffmpeg {}ms | \"{}\"",
+                transcribe, total, ffmpegLagMs, text);
+    }
+
     private void handleEvent(String raw) {
         try {
             JsonNode node = MAPPER.readTree(raw);
@@ -248,20 +302,32 @@ public class RealtimeSttSession implements SttStreamSession {
                         speechTimesByItem.put(node.path("item_id").asText(""),
                                 new long[]{node.path("audio_start_ms").asLong(0), -1});
                 case "input_audio_buffer.speech_stopped" -> {
-                    long[] t = speechTimesByItem.get(node.path("item_id").asText(""));
+                    String itemId = node.path("item_id").asText("");
+                    long[] t = speechTimesByItem.get(itemId);
                     if (t != null) t[1] = node.path("audio_end_ms").asLong(0);
+                    stopWallByItem.put(itemId, System.nanoTime()); // 무음 감지 시각 — 전사 소요 기준점
                 }
                 case "conversation.item.input_audio_transcription.delta" -> {
                     String itemId = node.path("item_id").asText("");
                     String acc = partials.computeIfAbsent(itemId, k -> new StringBuilder())
                             .append(node.path("delta").asText("")).toString();
+                    if (firstDeltaByItem.putIfAbsent(itemId, System.nanoTime()) == null && latencyLog) {
+                        long[] t = speechTimesByItem.get(itemId);
+                        // 첫 partial이 뜨기까지 = 발화 시작 후 화면에 글자가 처음 보이는 시점
+                        String since = (t != null && t[0] > 0) ? (sentAudioMs() - t[0]) + "ms" : "n/a";
+                        log.info("[STT계측-온라인] partial 첫 델타 — 발화시작 후 {} | ffmpeg {}ms", since, ffmpegLagMs);
+                    }
                     if (!acc.isBlank()) onPartial.accept(acc);
                 }
                 case "conversation.item.input_audio_transcription.completed" -> {
                     String itemId = node.path("item_id").asText("");
                     partials.remove(itemId);
                     String text = node.path("transcript").asText("").trim();
-                    if (text.isEmpty() || HALLUCINATION_PATTERN.matcher(text).find()) return;
+                    if (text.isEmpty() || HALLUCINATION_PATTERN.matcher(text).find()) {
+                        stopWallByItem.remove(itemId);   // 버려지는 발화의 계측 상태도 정리
+                        firstDeltaByItem.remove(itemId);
+                        return;
+                    }
                     long[] t = speechTimesByItem.remove(itemId);
                     double startSec, endSec;
                     if (t != null && t[1] > 0) {
@@ -271,6 +337,7 @@ public class RealtimeSttSession implements SttStreamSession {
                         endSec   = Math.max(0, (System.currentTimeMillis() - meetingStartMs) / 1000.0);
                         startSec = Math.max(0, endSec - 3.0);
                     }
+                    logFinalLatency(itemId, t, text);
                     onFinal.accept(new WhisperStreamingSession.Transcript(text, startSec, endSec));
                     log.info("[Realtime] 자막 확정 — [{}-{}s] \"{}\"",
                             String.format("%.1f", startSec), String.format("%.1f", endSec), text);
