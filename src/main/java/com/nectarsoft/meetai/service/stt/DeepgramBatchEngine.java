@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -73,12 +74,21 @@ public class DeepgramBatchEngine implements SttEngine {
                 .addQueryParameter("utterances", String.valueOf(diarize))
                 .build();
 
+        // 업로드 파일은 코덱이 제각각이라(통화 녹음 m4a 등) Deepgram이 400
+        // "corrupt or unsupported data"를 반환하는 경우가 있다.
+        // ffmpeg로 16kHz mono WAV로 정규화해 보내면 컨테이너·코덱 문제를 원천 차단한다
+        Path converted = transcodeToWav(audioPath);
+        Path toSend = converted != null ? converted : audioPath;
+        MediaType type = converted != null
+                ? MediaType.parse("audio/wav")
+                : guessMediaType(audioPath);
+
         try {
-            byte[] audio = Files.readAllBytes(audioPath);
+            byte[] audio = Files.readAllBytes(toSend);
             Request request = new Request.Builder()
                     .url(url)
                     .header("Authorization", "Token " + cfg.getApiKey())
-                    .post(RequestBody.create(audio, MediaType.parse("application/octet-stream")))
+                    .post(RequestBody.create(audio, type))
                     .build();
 
             try (Response response = http.newCall(request).execute()) {
@@ -91,7 +101,74 @@ public class DeepgramBatchEngine implements SttEngine {
             }
         } catch (IOException e) {
             throw new Exceptions.SttFailedError("Deepgram 배치 변환 중 오류", e);
+        } finally {
+            if (converted != null) {
+                try {
+                    Files.deleteIfExists(converted);
+                } catch (IOException ignored) {
+                    // 임시 파일 정리 실패는 변환 결과에 영향 없음
+                }
+            }
         }
+    }
+
+    /**
+     * ffmpeg로 16kHz mono WAV 변환. ffmpeg가 없거나 변환에 실패하면 null을 반환해
+     * 호출부가 원본을 그대로 전송하도록 폴백한다.
+     * -vn: 영상 파일(mp4/mov) 업로드 시 영상 트랙을 버리고 오디오만 남긴다
+     */
+    private Path transcodeToWav(Path source) {
+        if (!com.nectarsoft.meetai.service.FfmpegPcmDecoder.isAvailable()) {
+            log.warn("[DeepgramBatch] ffmpeg 없음 — 원본 그대로 전송 (코덱에 따라 400 가능)");
+            return null;
+        }
+        Path out = null;
+        try {
+            out = Files.createTempFile("dg-batch-", ".wav");
+            Process p = new ProcessBuilder(
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", source.toString(),
+                    "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+                    out.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            String err = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            boolean done = p.waitFor(5, TimeUnit.MINUTES);
+            if (!done || p.exitValue() != 0 || Files.size(out) == 0) {
+                if (!done) p.destroyForcibly();
+                log.warn("[DeepgramBatch] ffmpeg 변환 실패 — 원본 전송으로 폴백: {}", err.strip());
+                Files.deleteIfExists(out);
+                return null;
+            }
+            log.info("[DeepgramBatch] ffmpeg 정규화 완료 — {} → 16kHz mono WAV ({}KB)",
+                    source.getFileName(), Files.size(out) / 1024);
+            return out;
+        } catch (Exception e) {
+            log.warn("[DeepgramBatch] ffmpeg 실행 오류 — 원본 전송으로 폴백: {}", e.getMessage());
+            if (out != null) {
+                try {
+                    Files.deleteIfExists(out);
+                } catch (IOException ignored) {
+                    // 정리 실패는 무시
+                }
+            }
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /** ffmpeg 폴백 시 확장자로 Content-Type 추정 — octet-stream이면 Deepgram이 포맷을 못 읽을 수 있다 */
+    private MediaType guessMediaType(Path path) {
+        String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        String mime =
+                name.endsWith(".wav") ? "audio/wav" :
+                name.endsWith(".mp3") ? "audio/mpeg" :
+                name.endsWith(".m4a") || name.endsWith(".mp4") ? "audio/mp4" :
+                name.endsWith(".aac") ? "audio/aac" :
+                name.endsWith(".ogg") ? "audio/ogg" :
+                name.endsWith(".flac") ? "audio/flac" :
+                name.endsWith(".webm") ? "audio/webm" : "application/octet-stream";
+        return MediaType.parse(mime);
     }
 
     /**
