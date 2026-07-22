@@ -34,6 +34,8 @@ public class AssemblyAiStreamingManager {
 
     // key: "meetingId:profileId"
     private final ConcurrentHashMap<String, SttStreamSession> sessions = new ConcurrentHashMap<>();
+    // A/B 지연 통계 — 세션과 같은 키. 세션 종료 시 요약을 남기고 정리한다
+    private final ConcurrentHashMap<String, SttLatencyStats> latencyStats = new ConcurrentHashMap<>();
 
     public void sendAudio(String meetingId, String profileId, byte[] pcm) {
         sessions.computeIfAbsent(key(meetingId, profileId), k -> createSession(meetingId, profileId))
@@ -41,11 +43,13 @@ public class AssemblyAiStreamingManager {
     }
 
     public void endSession(String meetingId, String profileId) {
-        SttStreamSession s = sessions.remove(key(meetingId, profileId));
+        String k = key(meetingId, profileId);
+        SttStreamSession s = sessions.remove(k);
         if (s != null) {
             s.close();
             log.info("[StreamingMgr] 세션 종료 — meetingId={}, profileId={}", meetingId, profileId);
         }
+        flushStats(k);
     }
 
     public void endAllSessions(String meetingId) {
@@ -55,8 +59,15 @@ public class AssemblyAiStreamingManager {
                 .forEach(k -> {
                     SttStreamSession s = sessions.remove(k);
                     if (s != null) s.close();
+                    flushStats(k);
                 });
         log.info("[StreamingMgr] 회의 전체 세션 종료 — meetingId={}", meetingId);
+    }
+
+    /** 세션 종료 시 A/B 지연 요약 1회 출력 후 정리 */
+    private void flushStats(String key) {
+        SttLatencyStats s = latencyStats.remove(key);
+        if (s != null) s.logSummary();
     }
 
     private SttStreamSession createSession(String meetingId, String profileId) {
@@ -76,10 +87,14 @@ public class AssemblyAiStreamingManager {
         if (dg.isOnlineEnabled() && dg.getApiKey() != null && !dg.getApiKey().isBlank()) {
             try {
                 double offsetSec = sessionOffsetMs / 1000.0; // Deepgram 타임스탬프(스트림 기준) → 회의 기준 보정
+                SttLatencyStats dgStats = newStats("deepgram", meetingId, profileId, resolvedDisplay);
+                java.util.concurrent.atomic.AtomicReference<DeepgramStreamingSession> ref =
+                        new java.util.concurrent.atomic.AtomicReference<>();
                 DeepgramStreamingSession session = new DeepgramStreamingSession(
                         dg.getApiKey(), dg.getModel(), dg.getLanguage(), 16000,
                         dg.getEndpointingMs(), dg.isPartials(), false, // 화자분리 off
                         seg -> {
+                            recordDeepgramLatency(dgStats, seg, ref.get());
                             if (seg.isFinal()) {
                                 onFinal(meetingId, profileId, resolvedDisplay,
                                         new WhisperStreamingSession.Transcript(
@@ -88,6 +103,7 @@ public class AssemblyAiStreamingManager {
                                 onPartial(meetingId, profileId, resolvedDisplay, seg.text());
                             }
                         });
+                ref.set(session); // 콜백에서 세션의 오디오 시계를 읽기 위한 순환 참조 해소
                 log.info("[StreamingMgr] Deepgram 온라인 세션 생성 — meetingId={}, profileId={}", meetingId, profileId);
                 return session;
             } catch (Exception e) {
@@ -109,7 +125,7 @@ public class AssemblyAiStreamingManager {
                     props.getOpenai().getRealtimeModel(),
                     props.getOpenai().getWhisperLanguage(),
                     sessionOffsetMs,
-                    props.getOpenai().isLatencyLog(),
+                    newStats("openai-realtime", meetingId, profileId, resolvedDisplay),
                     t -> onFinal(meetingId, profileId, resolvedDisplay, t),
                     text -> onPartial(meetingId, profileId, resolvedDisplay, text)
             );
@@ -129,6 +145,36 @@ public class AssemblyAiStreamingManager {
         );
         log.info("[StreamingMgr] Whisper 세션 생성 — meetingId={}, profileId={}, offsetMs={}", meetingId, profileId, sessionOffsetMs);
         return session;
+    }
+
+    /** 세션과 같은 키로 A/B 통계를 만들어 보관 — 종료 시 요약을 남긴다 */
+    private SttLatencyStats newStats(String engine, String meetingId, String profileId, String display) {
+        SttLatencyStats s = new SttLatencyStats(engine, display, props.getOpenai().isLatencyLog());
+        latencyStats.put(key(meetingId, profileId), s);
+        return s;
+    }
+
+    /**
+     * Deepgram 세그먼트를 A/B 공통 지표로 환산.
+     * 총 지연은 벽시계가 아니라 오디오 시계(보낸 오디오 길이 − 세그먼트 종료 지점) 기준이라
+     * 프론트/서버 시계 오차와 무관하고, OpenAI 경로의 finalMs와 같은 의미가 된다.
+     */
+    private void recordDeepgramLatency(SttLatencyStats stats, DeepgramStreamingSession.Segment seg,
+                                       DeepgramStreamingSession session) {
+        if (stats == null || session == null || seg.timing() == null) return;
+
+        if (seg.isFinal()) {
+            // finalMs: 발화 종료 → 확정 방출 / engineMs: Deepgram 왕복(추론 포함) 근사
+            long finalMs = seg.endSec() > 0
+                    ? Math.round((session.sentAudioSec() - seg.endSec()) * 1000) : -1;
+            if (finalMs >= 60_000) finalMs = -1; // 재접속 등으로 원점이 어긋난 값은 버린다
+            stats.recordFinal(finalMs, seg.timing().deepgramGapMs(), seg.text());
+        } else {
+            // firstMs: 발화 시작 → 첫 partial. Deepgram은 partial마다 오므로 턴 시작 기준으로 환산
+            if (seg.startSec() > 0) {
+                stats.recordFirst(Math.round((session.sentAudioSec() - seg.startSec()) * 1000));
+            }
+        }
     }
 
     /** 말하는 중(partial) 자막 — DB 저장 없이 브로드캐스트만 */
