@@ -106,6 +106,17 @@ public class TranscriptPolishService {
                 textMap.put(((Number) s.get("id")).intValue(), (String) s.get("text"));
             }
 
+            // 개수가 맞아도 내용이 비어 오는 경우가 있다 — LLM이 두 세그먼트를 한쪽에 합쳐
+            // 넣고 남은 자리를 빈 문자열로 채우면 개수 검증을 통과한다. 이러면 자막이
+            // 통째로 빈 세그먼트가 되므로, 하나라도 비어 있으면 배치 전체를 원본으로 되돌린다
+            // (한 칸만 원본으로 채우면 합쳐진 쪽과 내용이 중복된다)
+            long blanks = textMap.values().stream()
+                    .filter(t -> t == null || t.isBlank()).count();
+            if (blanks > 0) {
+                log.warn("[Polish] 빈 텍스트 {}건 — 교정 결과 폐기하고 원본 유지 (offset={})", blanks, offset);
+                return batch;
+            }
+
             List<RawSegment> result = new ArrayList<>();
             for (int i = 0; i < batch.size(); i++) {
                 RawSegment orig = batch.get(i);
