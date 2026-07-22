@@ -11,8 +11,14 @@ import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
 import java.util.Map;
+import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 온라인 회의 참여자별 Whisper STT 세션 관리
@@ -36,6 +42,15 @@ public class AssemblyAiStreamingManager {
     private final ConcurrentHashMap<String, SttStreamSession> sessions = new ConcurrentHashMap<>();
     // A/B 지연 통계 — 세션과 같은 키. 세션 종료 시 요약을 남기고 정리한다
     private final ConcurrentHashMap<String, SttLatencyStats> latencyStats = new ConcurrentHashMap<>();
+
+    // 자막 저장을 브로드캐스트에서 떼어내 비동기로 돌린다. 참가자별 세션이 동시에
+    // 저장하므로 소규모 풀로 처리하고, 회의 종료 시 남은 작업을 드레인한다
+    private final ExecutorService persistExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread th = new Thread(r, "online-transcript-persist");
+        th.setDaemon(true);
+        return th;
+    });
+    private final ConcurrentHashMap<String, Queue<Future<?>>> pendingSaves = new ConcurrentHashMap<>();
 
     public void sendAudio(String meetingId, String profileId, byte[] pcm) {
         sessions.computeIfAbsent(key(meetingId, profileId), k -> createSession(meetingId, profileId))
@@ -61,6 +76,9 @@ public class AssemblyAiStreamingManager {
                     if (s != null) s.close();
                     flushStats(k);
                 });
+        // close()가 잔여 final을 플러시하며 저장 작업을 더 만들 수 있으므로 그 뒤에 드레인한다.
+        // 호출부(endMeeting)가 이 직후 transcript를 읽어 요약하므로 여기서 기다려야 누락이 없다
+        awaitPendingSaves(meetingId);
         log.info("[StreamingMgr] 회의 전체 세션 종료 — meetingId={}", meetingId);
     }
 
@@ -192,9 +210,44 @@ public class AssemblyAiStreamingManager {
         }
     }
 
+    /**
+     * 확정 자막 처리 — 브로드캐스트 먼저, DB 저장은 비동기.
+     *
+     * 이전에는 SttResult + Transcript 저장을 끝낸 뒤에야 브로드캐스트해서,
+     * 자막이 Supabase 왕복만큼 늦게 화면에 떴다. 실측 P50이 945ms로
+     * STT 지연(finalMs P50 643ms)보다 컸다 — 엔진을 바꿔 얻는 이득보다 큰 손실이라
+     * 순서를 뒤집는다. 자막 내용은 이미 메모리에 있으므로 저장을 기다릴 이유가 없다.
+     *
+     * 대신 회의 종료 시 요약이 아직 저장되지 않은 세그먼트를 놓칠 수 있어,
+     * endAllSessions에서 대기 중인 저장을 모두 드레인한 뒤 반환한다.
+     */
     private void onFinal(String meetingId, String profileId, String display,
                          WhisperStreamingSession.Transcript t) {
-        long t5 = System.nanoTime(); // 확정 자막 수신 — DB 저장/브로드캐스트 구간 계측 기준점
+        long t5 = System.nanoTime();
+        try {
+            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
+                    "type", "transcript",
+                    "profileId", profileId,
+                    "speakerDisplay", display,
+                    "text", t.text(),
+                    "startSec", t.startSec(),
+                    "endSec", t.endSec(),
+                    "isFinal", true
+            )));
+        } catch (Exception e) {
+            log.error("[StreamingMgr] 확정 자막 브로드캐스트 실패: {}", e.getMessage());
+        }
+        long bcMs = (System.nanoTime() - t5) / 1_000_000;
+        log.info("[StreamingMgr] FinalTranscript — [{}] \"{}\"", display, t.text());
+
+        Future<?> f = persistExecutor.submit(() -> persistTranscript(meetingId, profileId, display, t, bcMs));
+        pendingSaves.computeIfAbsent(meetingId, k -> new ConcurrentLinkedQueue<>()).add(f);
+    }
+
+    /** 비동기 저장 — 사용자는 이미 자막을 받았으므로 여기서 걸리는 시간은 체감에 영향이 없다 */
+    private void persistTranscript(String meetingId, String profileId, String display,
+                                   WhisperStreamingSession.Transcript t, long bcMs) {
+        long start = System.nanoTime();
         try {
             Meeting meeting = meetingRepo.findById(UUID.fromString(meetingId)).orElse(null);
             if (meeting == null) return;
@@ -215,27 +268,35 @@ public class AssemblyAiStreamingManager {
                     .endSec(t.endSec())
                     .content(t.text())
                     .build());
-            long dbMs = (System.nanoTime() - t5) / 1_000_000;
 
-            long bcStart = System.nanoTime();
-            roomManager.broadcast(meetingId, objectMapper.writeValueAsString(Map.of(
-                    "type", "transcript",
-                    "profileId", profileId,
-                    "speakerDisplay", display,
-                    "text", t.text(),
-                    "startSec", t.startSec(),
-                    "endSec", t.endSec(),
-                    "isFinal", true
-            )));
-            log.info("[StreamingMgr] FinalTranscript — [{}] \"{}\"", display, t.text());
             if (props.getOpenai().isLatencyLog()) {
-                // 자막은 DB 저장이 끝나야 나간다 — 저장이 느리면 그만큼 화면 표시가 늦어진다
-                log.info("[STT계측-온라인] t5 [{}] DB저장 {}ms | 브로드캐스트 {}ms",
-                        display, dbMs, (System.nanoTime() - bcStart) / 1_000_000);
+                log.info("[STT계측-온라인] t5 [{}] 브로드캐스트 {}ms | DB저장 {}ms (비동기, 체감 지연 아님)",
+                        display, bcMs, (System.nanoTime() - start) / 1_000_000);
             }
         } catch (Exception e) {
-            log.error("[StreamingMgr] FinalTranscript 처리 실패: {}", e.getMessage());
+            log.error("[StreamingMgr] 자막 저장 실패 — meetingId={}: {}", meetingId, e.getMessage());
         }
+    }
+
+    /**
+     * 대기 중인 비동기 저장을 모두 기다린다.
+     * 회의 종료 직후 요약이 transcript를 읽으므로, 여기서 드레인하지 않으면
+     * 아직 저장되지 않은 마지막 발화들이 요약에서 빠진다.
+     */
+    private void awaitPendingSaves(String meetingId) {
+        Queue<Future<?>> q = pendingSaves.remove(meetingId);
+        if (q == null || q.isEmpty()) return;
+        long deadline = System.currentTimeMillis() + 15_000;
+        int done = 0;
+        for (Future<?> f : q) {
+            try {
+                f.get(Math.max(0, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS);
+                done++;
+            } catch (Exception e) {
+                log.warn("[StreamingMgr] 자막 저장 대기 실패 — meetingId={}: {}", meetingId, e.toString());
+            }
+        }
+        log.info("[StreamingMgr] 자막 저장 드레인 완료 — meetingId={}, {}/{}건", meetingId, done, q.size());
     }
 
     private String key(String meetingId, String profileId) {
