@@ -22,7 +22,10 @@ meetai:
     #   OpenAI로 화자 분리를 하려면 openai_diarize(gpt-4o-transcribe-diarize)를 쓸 것
     # deepgram = 실시간 녹음과 같은 nova-3·같은 API 키라 화자 라벨 체계가 일치한다
     engine: ${STT_ENGINE:assemblyai}
-    confidence-threshold: 0.8
+    # 이 값 미만인 세그먼트는 회의록에서 제외된다.
+    # 엔진마다 confidence 척도가 달라(Deepgram 배치가 0.8에서 세그먼트를 버리는 사례 확인)
+    # 엔진을 바꿀 때는 [STT] confidence 제외 로그로 버려지는 내용을 확인하고 조정할 것
+    confidence-threshold: ${STT_CONFIDENCE_THRESHOLD:0.8}
     max-retries: 3
     retry-base-delay-ms: 1000
     retry-max-delay-ms: 8000

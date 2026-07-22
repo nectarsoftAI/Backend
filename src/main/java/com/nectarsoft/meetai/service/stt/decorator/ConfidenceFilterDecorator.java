@@ -47,6 +47,14 @@ public class ConfidenceFilterDecorator extends SttEngineDecorator {
         if (filtered.size() < segments.size()) {
             log.info("[STT] confidence 필터: {}/{} 세그먼트 제거 (임계값={})",
                     segments.size() - filtered.size(), segments.size(), threshold);
+            // 무엇이 버려졌는지 남긴다 — 잡음이면 정상이지만 실제 발화면 회의록 유실이다.
+            // 엔진마다 confidence 척도가 달라 임계값을 조정할 근거가 필요하다
+            segments.stream()
+                    .filter(s -> s.getConfidence() < threshold)
+                    .forEach(s -> log.info("[STT] confidence 제외 — conf={} [{}~{}s] \"{}\"",
+                            String.format("%.3f", s.getConfidence()),
+                            String.format("%.1f", s.getStartSec()),
+                            String.format("%.1f", s.getEndSec()), s.getText()));
         }
         return filtered;
     }
