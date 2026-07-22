@@ -43,9 +43,11 @@ meetai:
     language-code: ko
     # 0 = 화자 수 자동 감지 (참여 인원을 모르는 오프라인 녹음 기본값)
     speakers-expected: ${STT_SPEAKERS_EXPECTED:0}
-    # 화자 분리 지원 모델(universal-2 | universal-3-5-pro). 미지정 시 계정 기본 모델이
-    # 선택되는데, 그 모델이 speaker_labels 미지원이면 utterances가 비어서 온다
-    speech-model: ${ASSEMBLYAI_SPEECH_MODEL:universal-2}
+    # speech_model 명시가 필요할 때만 값을 넣는다(비우면 요청에 포함하지 않음).
+    # universal-2를 기본값으로 뒀더니 업로드가 전부 500으로 실패했다 —
+    # 모델 세대 이름이지 이 파라미터의 허용 값이 아닌 것으로 보인다.
+    # 넣으려면 AssemblyAI 문서에서 허용 값을 먼저 확인할 것
+    speech-model: ${ASSEMBLYAI_SPEECH_MODEL:}
     # speakers-expected를 모를 때 쓰는 범위 힌트 (0 = 미지정).
     # min을 2로 주면 전부 한 화자로 뭉치는 것을 막을 수 있다.
     # 단, 2분 미만 오디오에서는 적용되지 않는 이슈가 있다
