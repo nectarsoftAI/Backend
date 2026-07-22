@@ -30,7 +30,7 @@ import java.util.function.Consumer;
  *   awaitClose()로 그 도착을 기다린다. getSegments()는 확정 세그먼트만 반환
  */
 @Slf4j
-public class DeepgramStreamingSession {
+public class DeepgramStreamingSession implements SttStreamSession {
 
     public record Segment(String speakerLabel, String text, double startSec, double endSec,
                           double confidence, boolean isFinal, Timing timing) {}
@@ -72,13 +72,13 @@ public class DeepgramStreamingSession {
     private long turnLastWordNanos = 0;        // 현재 턴 마지막 단어 도착 시각
 
     public DeepgramStreamingSession(String apiKey, String model, String language, int sampleRate,
-                                    int endpointingMs, boolean partials,
+                                    int endpointingMs, boolean partials, boolean diarize,
                                     Consumer<Segment> onSegment) {
         this.onSegment = onSegment;
         String url = WS_URL + "?model=" + model
                 + "&language=" + language
                 + "&encoding=linear16&sample_rate=" + sampleRate + "&channels=1"
-                + "&diarize=true&smart_format=true"
+                + "&diarize=" + diarize + "&smart_format=true"
                 + "&endpointing=" + endpointingMs
                 + (partials ? "&interim_results=true&vad_events=true" : "");
         this.webSocket = HttpClient.newHttpClient()

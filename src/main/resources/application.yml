@@ -74,6 +74,8 @@ meetai:
   deepgram:
     api-key: ${DEEPGRAM_API_KEY:}
     enabled: ${DEEPGRAM_ENABLED:false}
+    # true면 온라인 회의 STT도 Deepgram 사용 (기본 OpenAI Realtime 대신) — A/B 테스트용, env로 롤백 가능
+    online-enabled: ${DEEPGRAM_ONLINE_ENABLED:false}
     model: ${DEEPGRAM_MODEL:nova-3}
     language: ${DEEPGRAM_LANGUAGE:ko}
     # 발화 종료(문장 경계) 판정 무음(ms). 작을수록 확정이 빨라지는 대신 문장이 잘게 쪼개짐
