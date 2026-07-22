@@ -15,8 +15,11 @@ meetai:
     supported-formats: wav,mp3,m4a,ogg,flac,webm
 
   stt:
-    # openai_whisper | gpt4o | assemblyai | deepgram
-    # 화자 분리 지원: assemblyai, deepgram (openai_whisper/gpt4o는 전 세그먼트 SPEAKER_00)
+    # openai_whisper | gpt4o | openai_diarize | assemblyai | deepgram
+    # 화자 분리 지원: assemblyai, deepgram, openai_diarize
+    # 미지원(전 세그먼트 SPEAKER_00): openai_whisper, gpt4o
+    #   gpt4o는 채팅 API에 오디오를 base64로 싣는 구현이라 화자 분리가 없고 동작도 안 한다.
+    #   OpenAI로 화자 분리를 하려면 openai_diarize(gpt-4o-transcribe-diarize)를 쓸 것
     # deepgram = 실시간 녹음과 같은 nova-3·같은 API 키라 화자 라벨 체계가 일치한다
     engine: ${STT_ENGINE:assemblyai}
     confidence-threshold: 0.8

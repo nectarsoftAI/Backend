@@ -92,16 +92,19 @@ public class SttService {
     private SttEngine createBase() {
         String engine = props.getStt().getEngine().toLowerCase();
         log.info("[STT] 엔진 선택: {}", engine);
-        // 주의: openai_whisper / gpt4o는 화자 분리를 하지 않는다(전 세그먼트 SPEAKER_00).
-        // 업로드 회의록에 화자가 필요하면 deepgram 또는 assemblyai를 써야 한다
+        // 화자 분리 지원: assemblyai, deepgram, openai_diarize
+        // 미지원(전 세그먼트 SPEAKER_00): openai_whisper, gpt4o
+        //   gpt4o는 채팅 API에 오디오를 base64로 싣는 구현이라 화자 분리가 없고 동작도 하지 않는다.
+        //   OpenAI로 화자 분리가 필요하면 openai_diarize(gpt-4o-transcribe-diarize)를 쓸 것
         return switch (engine) {
             case "openai_whisper" -> new OpenAiWhisperEngine(props);
             case "gpt4o" -> new OpenAiGpt4oEngine(props);
+            case "openai_diarize" -> new OpenAiDiarizeEngine(props);
             case "assemblyai" -> new AssemblyAiEngine(props);
             case "deepgram" -> new DeepgramBatchEngine(props);
             default -> throw new IllegalArgumentException(
                     "알 수 없는 STT 엔진: '" + engine
-                            + "' | 허용값: openai_whisper, gpt4o, assemblyai, deepgram");
+                            + "' | 허용값: openai_whisper, gpt4o, openai_diarize, assemblyai, deepgram");
         };
     }
 }
