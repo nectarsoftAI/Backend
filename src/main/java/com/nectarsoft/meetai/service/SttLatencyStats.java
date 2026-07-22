@@ -31,6 +31,8 @@ public class SttLatencyStats {
     private final List<Long> firstMs = Collections.synchronizedList(new ArrayList<>());
     private final List<Long> finalMs = Collections.synchronizedList(new ArrayList<>());
     private final List<Long> engineMs = Collections.synchronizedList(new ArrayList<>());
+    // 같은 턴의 후속 partial을 걸러내기 위한 직전 턴 시작 시각 (firstMs 잠금으로 보호)
+    private double lastFirstTurnStart = Double.NaN;
 
     public SttLatencyStats(String engine, String display, boolean enabled) {
         this.engine = engine;
@@ -42,11 +44,36 @@ public class SttLatencyStats {
         return engine;
     }
 
-    /** 발화 시작 → 첫 partial 도착 */
+    /**
+     * 발화 시작 → 첫 partial 도착.
+     *
+     * 엔진마다 값의 성격이 다르다는 점을 알고 읽어야 한다.
+     * - Deepgram: 발화 중에 partial이 오므로 작은 값 (수백 ms)
+     * - OpenAI Realtime: 문장이 끝나야 델타가 오므로 발화 길이가 통째로 포함된다
+     * 이건 계측 오류가 아니라 "언제 화면에 글자가 뜨는가"의 실제 차이다.
+     * 같은 오디오로 비교하면 발화 길이가 상쇄되므로 엔진 간 비교는 유효하다.
+     */
     public void recordFirst(long ms) {
         if (!enabled || ms < 0) return;
         firstMs.add(ms);
         log.debug("[AB] engine={} kind=partial firstMs={} speaker={}", engine, ms, display);
+    }
+
+    /**
+     * 한 발화(턴)당 첫 partial만 기록한다.
+     *
+     * Deepgram은 발화 중 partial을 초당 여러 번 보내는데, 매번 기록하면
+     * 같은 턴의 후속 partial이 계속 큰 값으로 쌓여(오디오는 진행하고 턴 시작은 고정)
+     * 표본 수가 부풀고 분포가 위로 왜곡된다. 발화당 1회만 기록하는
+     * OpenAI 경로(putIfAbsent)와 표본 성격을 맞추기 위한 것이다.
+     */
+    public void recordFirstOnce(double turnStartSec, long ms) {
+        if (!enabled) return;
+        synchronized (firstMs) {
+            if (turnStartSec == lastFirstTurnStart) return; // 같은 턴의 후속 partial
+            lastFirstTurnStart = turnStartSec;
+        }
+        recordFirst(ms);
     }
 
     /**
