@@ -65,7 +65,7 @@ public class RealtimeSttSession implements SttStreamSession {
     // "마지막 입력 이후 경과"로 근사한다.
     // 총 지연은 OpenAI가 주는 audio_end_ms(오디오 시계)와 우리가 보낸 오디오 길이의 차이라
     // 벽시계 오차와 무관하다.
-    private final boolean latencyLog;
+    private final SttLatencyStats stats;
     private volatile long lastAudioInNanos = 0;                    // sendAudio 진입 시각
     private volatile long ffmpegLagMs = 0;                         // t1→t2 근사
     private final java.util.concurrent.atomic.AtomicLong sentAudioBytes =
@@ -74,7 +74,7 @@ public class RealtimeSttSession implements SttStreamSession {
     private final Map<String, Long> firstDeltaByItem = new ConcurrentHashMap<>(); // 첫 partial 도착 시각
 
     public RealtimeSttSession(String apiKey, String model, String language,
-                              long sessionOffsetMs, boolean latencyLog,
+                              long sessionOffsetMs, SttLatencyStats stats,
                               Consumer<WhisperStreamingSession.Transcript> onFinal,
                               Consumer<String> onPartial) {
         this.apiKey = apiKey;
@@ -82,7 +82,7 @@ public class RealtimeSttSession implements SttStreamSession {
         this.language = language;
         this.meetingStartMs = System.currentTimeMillis() - sessionOffsetMs;
         this.sessionStartMs = System.currentTimeMillis();
-        this.latencyLog = latencyLog;
+        this.stats = stats;
         this.onFinal = onFinal;
         this.onPartial = onPartial;
 
@@ -280,17 +280,18 @@ public class RealtimeSttSession implements SttStreamSession {
     private void logFinalLatency(String itemId, long[] speech, String text) {
         Long stopNanos = stopWallByItem.remove(itemId);
         firstDeltaByItem.remove(itemId);
-        if (!latencyLog) return;
+        if (stats == null) return;
 
-        String transcribe = stopNanos != null
-                ? (System.nanoTime() - stopNanos) / 1_000_000 + "ms" : "n/a";
-        String total = "n/a";
+        // engineMs — OpenAI가 무음을 감지한 뒤 전사를 끝내기까지 (엔진이 쓴 몫)
+        long engineMs = stopNanos != null ? (System.nanoTime() - stopNanos) / 1_000_000 : -1;
+        // finalMs — 발화 종료(audio_end_ms) → 방출. 오디오 시계 기준이라 벽시계 오차와 무관.
+        // 재접속으로 버퍼 원점이 바뀌면 비정상 값이 나올 수 있어 범위를 벗어나면 버린다
+        long finalMs = -1;
         if (speech != null && speech[1] > 0) {
             long ms = sentAudioMs() - speech[1];
-            if (ms >= 0 && ms < 60_000) total = ms + "ms";
+            if (ms >= 0 && ms < 60_000) finalMs = ms;
         }
-        log.info("[STT계측-온라인] final — 전사 {} (무음감지 후) | 총지연 {} | ffmpeg {}ms | \"{}\"",
-                transcribe, total, ffmpegLagMs, text);
+        stats.recordFinal(finalMs, engineMs, text);
     }
 
     private void handleEvent(String raw) {
@@ -311,11 +312,10 @@ public class RealtimeSttSession implements SttStreamSession {
                     String itemId = node.path("item_id").asText("");
                     String acc = partials.computeIfAbsent(itemId, k -> new StringBuilder())
                             .append(node.path("delta").asText("")).toString();
-                    if (firstDeltaByItem.putIfAbsent(itemId, System.nanoTime()) == null && latencyLog) {
+                    if (firstDeltaByItem.putIfAbsent(itemId, System.nanoTime()) == null && stats != null) {
+                        // firstMs — 발화 시작 후 화면에 글자가 처음 보이기까지
                         long[] t = speechTimesByItem.get(itemId);
-                        // 첫 partial이 뜨기까지 = 발화 시작 후 화면에 글자가 처음 보이는 시점
-                        String since = (t != null && t[0] > 0) ? (sentAudioMs() - t[0]) + "ms" : "n/a";
-                        log.info("[STT계측-온라인] partial 첫 델타 — 발화시작 후 {} | ffmpeg {}ms", since, ffmpegLagMs);
+                        if (t != null && t[0] > 0) stats.recordFirst(sentAudioMs() - t[0]);
                     }
                     if (!acc.isBlank()) onPartial.accept(acc);
                 }

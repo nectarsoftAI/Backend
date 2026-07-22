@@ -49,7 +49,20 @@ public class DeepgramStreamingSession implements SttStreamSession {
     // 한 턴이 무한히 길어지지 않도록 상한 — 쉼 없이 말해도 이 길이마다 자막이 나간다
     private static final double MAX_TURN_SEC = 15.0;
 
-    private final WebSocket webSocket;
+    // 재접속으로 교체되므로 final이 아니다. sendLock으로 교체와 전송의 경합을 막는다
+    private volatile WebSocket webSocket;
+    private final Object sendLock = new Object();
+    private final String wsUrl;
+    private final String apiKey;
+    private final int bytesPerSec;             // sampleRate × 2 (16bit mono) — 오디오 시계 환산용
+    private volatile long lastReconnectMs = 0; // 재접속 스로틀
+
+    // 재접속하면 Deepgram 타임스탬프가 0부터 다시 시작하므로, 이전 연결까지 보낸
+    // 오디오 길이를 오프셋으로 더해 회의 전체 타임라인을 이어붙인다
+    private final java.util.concurrent.atomic.AtomicLong totalBytesSent =
+            new java.util.concurrent.atomic.AtomicLong();
+    private volatile double streamOffsetSec = 0;
+
     private final Consumer<Segment> onSegment;
     private final List<Segment> finals = Collections.synchronizedList(new ArrayList<>());
     private final CountDownLatch closedLatch = new CountDownLatch(1);
@@ -75,29 +88,76 @@ public class DeepgramStreamingSession implements SttStreamSession {
                                     int endpointingMs, boolean partials, boolean diarize,
                                     Consumer<Segment> onSegment) {
         this.onSegment = onSegment;
-        String url = WS_URL + "?model=" + model
+        this.apiKey = apiKey;
+        this.bytesPerSec = sampleRate * 2; // 16bit mono
+        this.wsUrl = WS_URL + "?model=" + model
                 + "&language=" + language
                 + "&encoding=linear16&sample_rate=" + sampleRate + "&channels=1"
                 + "&diarize=" + diarize + "&smart_format=true"
                 + "&endpointing=" + endpointingMs
                 + (partials ? "&interim_results=true&vad_events=true" : "");
-        this.webSocket = HttpClient.newHttpClient()
+        this.webSocket = connect();
+        log.info("[Deepgram] 세션 연결 — model={}, language={}, endpointing={}ms, partials={}, diarize={}",
+                model, language, endpointingMs, partials, diarize);
+    }
+
+    private WebSocket connect() {
+        return HttpClient.newHttpClient()
                 .newWebSocketBuilder()
                 .header("Authorization", "Token " + apiKey)
-                .buildAsync(URI.create(url), new Listener())
+                .buildAsync(URI.create(wsUrl), new Listener())
                 .join();
-        log.info("[Deepgram] 세션 연결 — model={}, language={}, endpointing={}ms, partials={}",
-                model, language, endpointingMs, partials);
+    }
+
+    /**
+     * 끊긴 연결 복구. 온라인 회의는 참가자별 세션이 장시간 유지되므로,
+     * 재접속이 없으면 한 번 끊긴 참가자의 자막이 영구히 멈춘다.
+     * 재접속 후 Deepgram 타임스탬프가 0부터 다시 시작하므로 지금까지 보낸
+     * 오디오 길이를 오프셋으로 잡아 타임라인을 이어붙인다.
+     */
+    private void reconnect() {
+        if (closed) return;
+        synchronized (sendLock) {
+            long now = System.currentTimeMillis();
+            if (now - lastReconnectMs < 5000) return; // 스로틀 — 끊김이 이어질 때 폭주 방지
+            lastReconnectMs = now;
+            try {
+                streamOffsetSec = totalBytesSent.get() / (double) bytesPerSec;
+                webSocket = connect();
+            } catch (Exception e) {
+                log.error("[Deepgram] 재접속 실패: {}", e.getMessage());
+                return;
+            }
+        }
+        // 끊길 때 누적 중이던 턴은 새 스트림의 타임스탬프와 이어지지 않으므로 버린다
+        synchronized (turnLock) {
+            turnSpeaker = null;
+            turnText.setLength(0);
+            turnStart = -1;
+            turnFirstWordNanos = 0;
+            turnLastWordNanos = 0;
+        }
+        log.info("[Deepgram] WS 재접속 완료 — 타임라인 오프셋 {}초", String.format("%.1f", streamOffsetSec));
     }
 
     public void sendAudio(byte[] pcm) {
         if (closed) return;
         try {
             lastSendNanos = System.nanoTime();
-            webSocket.sendBinary(ByteBuffer.wrap(pcm), true);
+            synchronized (sendLock) {
+                webSocket.sendBinary(ByteBuffer.wrap(pcm), true);
+            }
+            totalBytesSent.addAndGet(pcm.length);
         } catch (Exception e) {
-            log.warn("[Deepgram] 오디오 전송 실패: {}", e.getMessage());
+            if (closed) return;
+            log.warn("[Deepgram] 오디오 전송 실패 — 재접속 시도: {}", e.getMessage());
+            reconnect();
         }
+    }
+
+    /** 지금까지 보낸 오디오 길이(초) — 오디오 시계 기준 지연 계산용 */
+    public double sentAudioSec() {
+        return totalBytesSent.get() / (double) bytesPerSec;
     }
 
     /** CloseStream 전송 — 서버가 잔여 결과를 플러시한 뒤 연결을 닫는다 */
@@ -145,8 +205,9 @@ public class DeepgramStreamingSession implements SttStreamSession {
                     turnLastWordNanos > 0 ? (now - turnLastWordNanos) / 1_000_000 : 0,
                     turnFirstWordNanos > 0 ? (now - turnFirstWordNanos) / 1_000_000 : 0,
                     now);
+            // Deepgram 타임스탬프는 현재 연결 기준이므로 재접속 오프셋을 더해 회의 전체 기준으로 맞춘다
             Segment seg = new Segment(speakerLabel(turnSpeaker), text,
-                    turnStart, turnEnd, turnConfidence, true, timing);
+                    turnStart + streamOffsetSec, turnEnd + streamOffsetSec, turnConfidence, true, timing);
             finals.add(seg);
             try {
                 onSegment.accept(seg);
@@ -294,7 +355,8 @@ public class DeepgramStreamingSession implements SttStreamSession {
             if (t.isEmpty()) return;
             try {
                 Timing timing = new Timing(lastResultGapMs, 0, 0, System.nanoTime());
-                onSegment.accept(new Segment(speakerLabel(speaker), t, start, end, confidence, false, timing));
+                onSegment.accept(new Segment(speakerLabel(speaker), t,
+                        start + streamOffsetSec, end + streamOffsetSec, confidence, false, timing));
             } catch (Exception e) {
                 log.debug("[Deepgram] 세그먼트 콜백 오류: {}", e.getMessage());
             }
@@ -302,20 +364,31 @@ public class DeepgramStreamingSession implements SttStreamSession {
 
         @Override
         public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
-            closed = true;
             synchronized (turnLock) {
-                flushTurnLocked(); // 서버가 닫기 전 마지막 조각까지 확정
+                flushTurnLocked(); // 닫히기 전 마지막 조각까지 확정
             }
-            closedLatch.countDown();
-            log.info("[Deepgram] 세션 종료 — code={}, reason={}", statusCode, reason);
+            // close()로 우리가 닫은 경우에만 종료 확정. 그 외(네트워크 끊김, 서버측 종료)는
+            // 세션을 살려두고 재접속한다 — 안 그러면 참가자 자막이 영구히 멈춘다
+            if (closed) {
+                closedLatch.countDown();
+                log.info("[Deepgram] 세션 종료 — code={}, reason={}", statusCode, reason);
+            } else {
+                log.warn("[Deepgram] 연결 끊김 — 재접속 시도, code={}, reason={}", statusCode, reason);
+                reconnect();
+            }
             return null;
         }
 
         @Override
         public void onError(WebSocket ws, Throwable error) {
-            closed = true;
-            closedLatch.countDown();
-            log.error("[Deepgram] 오류: {}", error.getMessage());
+            // 여기서 closed=true로 두면 재접속 경로가 막혀 세션이 영구히 죽는다.
+            // 종료 확정은 close()/onClose에만 맡기고, 여기서는 복구를 시도한다
+            if (closed) {
+                closedLatch.countDown();
+                return;
+            }
+            log.error("[Deepgram] 오류 — 재접속 시도: {}", error.getMessage());
+            reconnect();
         }
     }
 
