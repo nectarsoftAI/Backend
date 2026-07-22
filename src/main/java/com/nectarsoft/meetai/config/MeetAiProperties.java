@@ -120,6 +120,8 @@ public class MeetAiProperties {
         private String apiKey = "";
         // true일 때 실시간 녹음이 Deepgram nova-3 스트리밍 사용 — Speechmatics보다 우선
         private boolean enabled = false;
+        // true일 때 온라인 회의 STT도 Deepgram 사용 (기본 OpenAI Realtime 대신) — 참가자별 스트림이라 diarize=false
+        private boolean onlineEnabled = false;
         private String model = "nova-3";
         private String language = "ko";
         // 발화 종료(문장 경계) 판정 무음(ms). 작을수록 확정이 빨라지는 대신 문장이 잘게 쪼개짐.

@@ -70,6 +70,31 @@ public class AssemblyAiStreamingManager {
                 .map(m -> System.currentTimeMillis() - m.getMeetingDate().toInstant().toEpochMilli())
                 .orElse(0L);
 
+        // 온라인 STT를 Deepgram으로 (DEEPGRAM_ONLINE_ENABLED=true) — 참가자별 스트림이라 화자분리 불필요(diarize=false).
+        // 온라인 오디오는 raw PCM 16kHz mono라 ffmpeg 없이 Deepgram(linear16)에 직송. 실패 시 아래 OpenAI로 폴백.
+        MeetAiProperties.Deepgram dg = props.getDeepgram();
+        if (dg.isOnlineEnabled() && dg.getApiKey() != null && !dg.getApiKey().isBlank()) {
+            try {
+                double offsetSec = sessionOffsetMs / 1000.0; // Deepgram 타임스탬프(스트림 기준) → 회의 기준 보정
+                DeepgramStreamingSession session = new DeepgramStreamingSession(
+                        dg.getApiKey(), dg.getModel(), dg.getLanguage(), 16000,
+                        dg.getEndpointingMs(), dg.isPartials(), false, // 화자분리 off
+                        seg -> {
+                            if (seg.isFinal()) {
+                                onFinal(meetingId, profileId, resolvedDisplay,
+                                        new WhisperStreamingSession.Transcript(
+                                                seg.text(), seg.startSec() + offsetSec, seg.endSec() + offsetSec));
+                            } else {
+                                onPartial(meetingId, profileId, resolvedDisplay, seg.text());
+                            }
+                        });
+                log.info("[StreamingMgr] Deepgram 온라인 세션 생성 — meetingId={}, profileId={}", meetingId, profileId);
+                return session;
+            } catch (Exception e) {
+                log.warn("[StreamingMgr] Deepgram 온라인 연결 실패 — OpenAI로 폴백: {}", e.getMessage());
+            }
+        }
+
         String apiKey = props.getOpenai().getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             log.error("[StreamingMgr] OPENAI_API_KEY 환경변수가 설정되지 않았습니다");

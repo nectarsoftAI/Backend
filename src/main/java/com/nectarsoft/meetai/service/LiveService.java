@@ -162,7 +162,7 @@ public class LiveService {
             MeetAiProperties.Deepgram cfg = props.getDeepgram();
             log.info("[Live] Deepgram 스트리밍 세션 시작 — meetingId={}", meetingId);
             return new DeepgramStreamingSession(cfg.getApiKey(), cfg.getModel(), cfg.getLanguage(),
-                    SAMPLE_RATE, cfg.getEndpointingMs(), cfg.isPartials(),
+                    SAMPLE_RATE, cfg.getEndpointingMs(), cfg.isPartials(), true, // 오프라인은 화자분리 필요
                     seg -> broadcastDeepgramSegment(meetingId, seg));
         } catch (Exception e) {
             dgFailed.add(meetingId);
