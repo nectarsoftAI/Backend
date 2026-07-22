@@ -188,9 +188,12 @@ public class AssemblyAiStreamingManager {
             if (finalMs >= 60_000) finalMs = -1; // 재접속 등으로 원점이 어긋난 값은 버린다
             stats.recordFinal(finalMs, seg.timing().deepgramGapMs(), seg.text());
         } else {
-            // firstMs: 발화 시작 → 첫 partial. Deepgram은 partial마다 오므로 턴 시작 기준으로 환산
+            // firstMs: 발화 시작 → 첫 partial.
+            // Deepgram은 한 턴에 partial을 여러 번 보내므로 턴당 첫 건만 기록한다
+            // (매번 기록하면 같은 턴의 후속 partial이 큰 값으로 쌓여 분포가 왜곡된다)
             if (seg.startSec() > 0) {
-                stats.recordFirst(Math.round((session.sentAudioSec() - seg.startSec()) * 1000));
+                stats.recordFirstOnce(seg.startSec(),
+                        Math.round((session.sentAudioSec() - seg.startSec()) * 1000));
             }
         }
     }
